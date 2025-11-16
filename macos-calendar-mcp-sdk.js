@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 
+// Load environment variables from .env file (if present)
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { execSync } from 'child_process';
+import { randomUUID } from 'node:crypto';
+import express from 'express';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
-class MacOSCalendarServer {
+export class MacOSCalendarServer {
   constructor() {
     this.server = new Server(
       {
@@ -229,7 +237,7 @@ class MacOSCalendarServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const { name, arguments: args } = request.params;
-        
+
         switch (name) {
           case 'list-calendars':
             return await this.listCalendars();
@@ -270,11 +278,11 @@ class MacOSCalendarServer {
     const [datePart, timePart] = dateStr.split(' ');
     const [year, month, day] = datePart.split('-').map(Number);
     const [hour, minute] = timePart.split(':').map(Number);
-    
+
     if (!year || !month || !day || hour === undefined || minute === undefined) {
       throw new Error(`无效的日期格式: ${dateStr}，请使用 YYYY-MM-DD HH:MM 格式`);
     }
-    
+
     return {
       year,
       month,
@@ -300,7 +308,7 @@ class MacOSCalendarServer {
       const script = `tell application "Calendar" to get name of calendars`;
       const result = execSync(`osascript -e '${script}'`, { encoding: 'utf8' });
       const calendars = result.trim().split(', ');
-      
+
       return {
         content: [
           {
@@ -310,26 +318,55 @@ class MacOSCalendarServer {
         ],
       };
     } catch (error) {
-      throw new Error(`获取日历列表失败: ${error.message}`);
+      let errorMessage = `❌ 获取日历列表失败: ${error.message}`;
+
+      if (error.message.includes('not allowed') || error.message.includes('permission')) {
+        errorMessage += `\n\n⚠️ 权限错误：macOS 需要授予 Calendar 应用权限。\n请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。`;
+      } else if (error.message.includes('not found') || error.message.includes('Calendar.app')) {
+        errorMessage += `\n\n⚠️ Calendar 应用未找到。请确保 macOS Calendar 应用已安装且可访问。`;
+      }
+
+      throw new Error(errorMessage);
     }
   }
 
   async createEvent(args) {
+    // Validation
+    if (!args.title) {
+      throw new Error(`❌ 验证错误：缺少必需参数 "title"。\n请提供事件标题。示例: {"title": "Team Meeting", "startDate": "2025-01-15 14:00", "endDate": "2025-01-15 15:00"}`);
+    }
+    if (!args.startDate) {
+      throw new Error(`❌ 验证错误：缺少必需参数 "startDate"。\n请使用格式: YYYY-MM-DD HH:MM (24小时制)。示例: "2025-01-15 14:00"`);
+    }
+    if (!args.endDate) {
+      throw new Error(`❌ 验证错误：缺少必需参数 "endDate"。\n请使用格式: YYYY-MM-DD HH:MM (24小时制)。示例: "2025-01-15 15:00"`);
+    }
+
     const { calendar = '个人', title, startDate, endDate, description = '', location = '' } = args;
-    
-    const startInfo = this.formatDateForAppleScript(startDate);
-    const endInfo = this.formatDateForAppleScript(endDate);
-    
+
+    let startInfo, endInfo;
+    try {
+      startInfo = this.formatDateForAppleScript(startDate);
+    } catch (error) {
+      throw new Error(`❌ 日期格式错误：startDate "${startDate}" 格式无效。\n预期格式: YYYY-MM-DD HH:MM (24小时制)\n示例: "2025-01-15 14:30"\n你提供的: "${startDate}"`);
+    }
+
+    try {
+      endInfo = this.formatDateForAppleScript(endDate);
+    } catch (error) {
+      throw new Error(`❌ 日期格式错误：endDate "${endDate}" 格式无效。\n预期格式: YYYY-MM-DD HH:MM (24小时制)\n示例: "2025-01-15 15:30"\n你提供的: "${endDate}"`);
+    }
+
     const startTimeScript = this.generateTimeScript(startInfo, 'startTime');
     const endTimeScript = this.generateTimeScript(endInfo, 'endTime');
 
     const script = `
       tell application "Calendar"
         set theCalendar to calendar "${calendar}"
-        
+
         ${startTimeScript}
         ${endTimeScript}
-        
+
         make new event at end of events of theCalendar with properties {summary:"${title}", start date:startTime, end date:endTime, description:"${description}", location:"${location}"}
       end tell
     `;
@@ -345,11 +382,29 @@ class MacOSCalendarServer {
         ],
       };
     } catch (error) {
-      throw new Error(`创建事件失败: ${error.message}`);
+      let errorMessage = `❌ 创建事件失败: ${error.message}`;
+
+      if (error.message.includes(`doesn't understand the "calendar" message`) ||
+          error.message.includes(`Can't get calendar`) ||
+          error.message.includes(`can't get calendar`)) {
+        errorMessage += `\n\n⚠️ 日历 "${calendar}" 未找到。\n请使用 list-calendars 工具查看可用的日历名称。\n注意：日历名称区分大小写，必须完全匹配。`;
+      } else if (error.message.includes('not allowed') || error.message.includes('permission')) {
+        errorMessage += `\n\n⚠️ 权限错误：macOS 需要授予 Calendar 应用权限。\n请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。`;
+      }
+
+      throw new Error(errorMessage);
     }
   }
 
   async createBatchEvents(args) {
+    // Validation
+    if (!args.events || !Array.isArray(args.events)) {
+      throw new Error(`❌ 验证错误：缺少必需参数 "events" 或格式不正确。\n请提供一个事件数组。示例: {"events": [{"title": "Event 1", "startDate": "2025-01-15 14:00", "endDate": "2025-01-15 15:00"}]}`);
+    }
+    if (args.events.length === 0) {
+      throw new Error(`❌ 验证错误：事件数组为空。\n请提供至少一个事件。`);
+    }
+
     const { events, calendar = '工作' } = args;
     const results = [];
     let successCount = 0;
@@ -357,19 +412,50 @@ class MacOSCalendarServer {
 
     for (const event of events) {
       try {
-        const startInfo = this.formatDateForAppleScript(event.startDate);
-        const endInfo = this.formatDateForAppleScript(event.endDate);
-        
+        // Validate individual event
+        if (!event.title) {
+          results.push(`❌ ${event.title || '(未命名)'} - 验证失败: 缺少必需参数 "title"`);
+          failCount++;
+          continue;
+        }
+        if (!event.startDate) {
+          results.push(`❌ ${event.title} - 验证失败: 缺少必需参数 "startDate"。预期格式: YYYY-MM-DD HH:MM`);
+          failCount++;
+          continue;
+        }
+        if (!event.endDate) {
+          results.push(`❌ ${event.title} - 验证失败: 缺少必需参数 "endDate"。预期格式: YYYY-MM-DD HH:MM`);
+          failCount++;
+          continue;
+        }
+
+        let startInfo, endInfo;
+        try {
+          startInfo = this.formatDateForAppleScript(event.startDate);
+        } catch (error) {
+          results.push(`❌ ${event.title} - 日期格式错误: startDate "${event.startDate}" 格式无效。预期格式: YYYY-MM-DD HH:MM`);
+          failCount++;
+          continue;
+        }
+
+        try {
+          endInfo = this.formatDateForAppleScript(event.endDate);
+        } catch (error) {
+          results.push(`❌ ${event.title} - 日期格式错误: endDate "${event.endDate}" 格式无效。预期格式: YYYY-MM-DD HH:MM`);
+          failCount++;
+          continue;
+        }
+
         const startTimeScript = this.generateTimeScript(startInfo, 'startTime');
         const endTimeScript = this.generateTimeScript(endInfo, 'endTime');
 
         const script = `
           tell application "Calendar"
             set theCalendar to calendar "${calendar}"
-            
+
             ${startTimeScript}
             ${endTimeScript}
-            
+
             make new event at end of events of theCalendar with properties {summary:"${event.title}", start date:startTime, end date:endTime, description:"${event.description || ''}", location:"${event.location || ''}"}
           end tell
         `;
@@ -378,7 +464,13 @@ class MacOSCalendarServer {
         results.push(`✅ ${event.title} - ${event.startDate}`);
         successCount++;
       } catch (error) {
-        results.push(`❌ ${event.title} - 失败: ${error.message}`);
+        let errorMsg = error.message;
+        if (error.message.includes(`doesn't understand the "calendar" message`)) {
+          errorMsg = `日历 "${calendar}" 未找到。请使用 list-calendars 查看可用日历`;
+        } else if (error.message.includes('not allowed') || error.message.includes('permission')) {
+          errorMsg = `权限错误。请检查系统设置 → 隐私与安全性 → 日历`;
+        }
+        results.push(`❌ ${event.title || '(未命名)'} - 失败: ${errorMsg}`);
         failCount++;
       }
     }
@@ -395,7 +487,7 @@ class MacOSCalendarServer {
 
   async deleteEventsByKeyword(args) {
     const { keyword, calendar = '工作', confirm = false } = args;
-    
+
     if (!confirm) {
       return {
         content: [
@@ -412,14 +504,14 @@ class MacOSCalendarServer {
         set theCalendar to calendar "${calendar}"
         set allEvents to every event of theCalendar
         set deletedCount to 0
-        
+
         repeat with anEvent in reverse of allEvents
           if (summary of anEvent) contains "${keyword}" then
             delete anEvent
             set deletedCount to deletedCount + 1
           end if
         end repeat
-        
+
         return deletedCount
       end tell
     `;
@@ -427,7 +519,7 @@ class MacOSCalendarServer {
     try {
       const result = execSync(`osascript -e '${script}'`, { encoding: 'utf8' });
       const deletedCount = parseInt(result.trim()) || 0;
-      
+
       return {
         content: [
           {
@@ -437,27 +529,37 @@ class MacOSCalendarServer {
         ],
       };
     } catch (error) {
-      throw new Error(`删除事件失败: ${error.message}`);
+      let errorMessage = `❌ 删除事件失败: ${error.message}`;
+
+      if (!args.keyword) {
+        errorMessage = `❌ 验证错误：缺少必需参数 "keyword"。\n请提供要删除的事件关键词。`;
+      } else if (error.message.includes(`doesn't understand the "calendar" message`)) {
+        errorMessage += `\n\n⚠️ 日历 "${calendar}" 未找到。\n请使用 list-calendars 工具查看可用的日历名称。\n注意：日历名称区分大小写，必须完全匹配。`;
+      } else if (error.message.includes('not allowed') || error.message.includes('permission')) {
+        errorMessage += `\n\n⚠️ 权限错误：macOS 需要授予 Calendar 应用权限。\n请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。`;
+      }
+
+      throw new Error(errorMessage);
     }
   }
 
   async listTodayEvents(args) {
     const { calendar = '个人' } = args;
-    
+
     const script = `
       tell application "Calendar"
         set theCalendar to calendar "${calendar}"
         set todayStart to (current date) - (time of (current date))
         set todayEnd to todayStart + (24 * hours) - 1
-        
+
         set todayEvents to every event of theCalendar whose start date ≥ todayStart and start date ≤ todayEnd
-        
+
         set eventList to {}
         repeat with anEvent in todayEvents
           set eventInfo to (summary of anEvent) & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & (description of anEvent) & "|" & (location of anEvent)
           set end of eventList to eventInfo
         end repeat
-        
+
         return eventList as string
       end tell
     `;
@@ -465,7 +567,7 @@ class MacOSCalendarServer {
     try {
       const result = execSync(`osascript -e '${script}'`, { encoding: 'utf8' });
       const events = result.trim();
-      
+
       if (!events || events === '""') {
         return {
           content: [
@@ -491,34 +593,44 @@ class MacOSCalendarServer {
         ],
       };
     } catch (error) {
-      throw new Error(`获取今日事件失败: ${error.message}`);
+      let errorMessage = `❌ 获取今日事件失败: ${error.message}`;
+
+      if (error.message.includes(`doesn't understand the "calendar" message`) ||
+          error.message.includes(`Can't get calendar`) ||
+          error.message.includes(`can't get calendar`)) {
+        errorMessage += `\n\n⚠️ 日历 "${calendar}" 未找到。\n请使用 list-calendars 工具查看可用的日历名称。\n注意：日历名称区分大小写，必须完全匹配。`;
+      } else if (error.message.includes('not allowed') || error.message.includes('permission')) {
+        errorMessage += `\n\n⚠️ 权限错误：macOS 需要授予 Calendar 应用权限。\n请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。`;
+      }
+
+      throw new Error(errorMessage);
     }
   }
 
   async listWeekEvents(args) {
     const { weekStart, calendar = '工作' } = args;
-    
+
     const startDate = new Date(weekStart);
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + 7);
-    
+
     const formattedStart = this.formatDateForAppleScript(weekStart + ' 00:00');
     const formattedEnd = this.formatDateForAppleScript(endDate.toISOString().split('T')[0] + ' 00:00');
-    
+
     const script = `
       tell application "Calendar"
         set theCalendar to calendar "${calendar}"
         set weekStart to date "${formattedStart}"
         set weekEnd to date "${formattedEnd}"
-        
+
         set weekEvents to every event of theCalendar whose start date ≥ weekStart and start date < weekEnd
-        
+
         set eventList to {}
         repeat with anEvent in weekEvents
           set eventInfo to (summary of anEvent) & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & (location of anEvent)
           set end of eventList to eventInfo
         end repeat
-        
+
         return eventList as string
       end tell
     `;
@@ -526,7 +638,7 @@ class MacOSCalendarServer {
     try {
       const result = execSync(`osascript -e '${script}'`, { encoding: 'utf8' });
       const events = result.trim();
-      
+
       if (!events || events === '""') {
         return {
           content: [
@@ -552,18 +664,36 @@ class MacOSCalendarServer {
         ],
       };
     } catch (error) {
-      throw new Error(`获取周事件失败: ${error.message}`);
+      let errorMessage = `❌ 获取周事件失败: ${error.message}`;
+
+      if (!args.weekStart) {
+        errorMessage = `❌ 验证错误：缺少必需参数 "weekStart"。\n请使用格式: YYYY-MM-DD。示例: "2025-01-15"`;
+      } else {
+        try {
+          this.formatDateForAppleScript(args.weekStart + ' 00:00');
+        } catch (dateError) {
+          errorMessage = `❌ 日期格式错误：weekStart "${args.weekStart}" 格式无效。\n预期格式: YYYY-MM-DD\n示例: "2025-01-15"\n你提供的: "${args.weekStart}"`;
+        }
+      }
+
+      if (error.message.includes(`doesn't understand the "calendar" message`)) {
+        errorMessage += `\n\n⚠️ 日历 "${calendar}" 未找到。\n请使用 list-calendars 工具查看可用的日历名称。`;
+      } else if (error.message.includes('not allowed') || error.message.includes('permission')) {
+        errorMessage += `\n\n⚠️ 权限错误：macOS 需要授予 Calendar 应用权限。\n请检查：系统设置 → 隐私与安全性 → 日历`;
+      }
+
+      throw new Error(errorMessage);
     }
   }
 
   async searchEvents(args) {
     const { query, calendar = '个人' } = args;
-    
+
     const script = `
       tell application "Calendar"
         set theCalendar to calendar "${calendar}"
         set allEvents to every event of theCalendar
-        
+
         set matchingEvents to {}
         repeat with anEvent in allEvents
           if (summary of anEvent) contains "${query}" or (description of anEvent) contains "${query}" then
@@ -571,7 +701,7 @@ class MacOSCalendarServer {
             set end of matchingEvents to eventInfo
           end if
         end repeat
-        
+
         return matchingEvents as string
       end tell
     `;
@@ -579,7 +709,7 @@ class MacOSCalendarServer {
     try {
       const result = execSync(`osascript -e '${script}'`, { encoding: 'utf8' });
       const events = result.trim();
-      
+
       if (!events || events === '""') {
         return {
           content: [
@@ -605,11 +735,29 @@ class MacOSCalendarServer {
         ],
       };
     } catch (error) {
-      throw new Error(`搜索事件失败: ${error.message}`);
+      let errorMessage = `❌ 搜索事件失败: ${error.message}`;
+
+      if (!args.query || args.query.trim() === '') {
+        errorMessage = `❌ 验证错误：缺少必需参数 "query" 或查询字符串为空。\n请提供搜索关键词。示例: {"query": "meeting"}`;
+      } else if (error.message.includes(`doesn't understand the "calendar" message`)) {
+        errorMessage += `\n\n⚠️ 日历 "${calendar}" 未找到。\n请使用 list-calendars 工具查看可用的日历名称。\n注意：日历名称区分大小写，必须完全匹配。`;
+      } else if (error.message.includes('not allowed') || error.message.includes('permission')) {
+        errorMessage += `\n\n⚠️ 权限错误：macOS 需要授予 Calendar 应用权限。\n请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。`;
+      }
+
+      throw new Error(errorMessage);
     }
   }
 
   async fixEventTimes(args) {
+    // Validation
+    if (!args.datePattern) {
+      throw new Error(`❌ 验证错误：缺少必需参数 "datePattern"。\n请使用格式: YYYY-MM-DD。示例: "2025-01-15"`);
+    }
+    if (!args.corrections || !Array.isArray(args.corrections) || args.corrections.length === 0) {
+      throw new Error(`❌ 验证错误：缺少必需参数 "corrections" 或数组为空。\n请提供一个修正数组。示例: {"datePattern": "2025-01-15", "corrections": [{"keyword": "Meeting", "newStartTime": "14:00", "newEndTime": "15:00"}]}`);
+    }
+
     const { calendar = '工作', datePattern, corrections } = args;
     const results = [];
     let successCount = 0;
@@ -620,10 +768,10 @@ class MacOSCalendarServer {
         // 构建正确的日期时间
         const newStartDateTime = `${datePattern} ${correction.newStartTime}`;
         const newEndDateTime = `${datePattern} ${correction.newEndTime}`;
-        
+
         const startInfo = this.formatDateForAppleScript(newStartDateTime);
         const endInfo = this.formatDateForAppleScript(newEndDateTime);
-        
+
         const startTimeScript = this.generateTimeScript(startInfo, 'newStartTime');
         const endTimeScript = this.generateTimeScript(endInfo, 'newEndTime');
 
@@ -632,10 +780,10 @@ class MacOSCalendarServer {
             set theCalendar to calendar "${calendar}"
             set allEvents to every event of theCalendar
             set fixedCount to 0
-            
+
             ${startTimeScript}
             ${endTimeScript}
-            
+
             repeat with anEvent in allEvents
               if (summary of anEvent) contains "${correction.keyword}" then
                 set start date of anEvent to newStartTime
@@ -643,14 +791,14 @@ class MacOSCalendarServer {
                 set fixedCount to fixedCount + 1
               end if
             end repeat
-            
+
             return fixedCount
           end tell
         `;
 
         const result = execSync(`osascript -e '${script}'`, { encoding: 'utf8' });
         const fixedCount = parseInt(result.trim()) || 0;
-        
+
         if (fixedCount > 0) {
           results.push(`✅ "${correction.keyword}" - 修正了 ${fixedCount} 个事件到 ${correction.newStartTime}-${correction.newEndTime}`);
           successCount += fixedCount;
@@ -658,7 +806,19 @@ class MacOSCalendarServer {
           results.push(`⚠️ "${correction.keyword}" - 未找到匹配的事件`);
         }
       } catch (error) {
-        results.push(`❌ "${correction.keyword}" - 修正失败: ${error.message}`);
+        let errorMsg = error.message;
+        if (!correction.keyword) {
+          errorMsg = `缺少必需参数 "keyword"`;
+        } else if (!correction.newStartTime) {
+          errorMsg = `缺少必需参数 "newStartTime"。预期格式: HH:MM (24小时制)`;
+        } else if (!correction.newEndTime) {
+          errorMsg = `缺少必需参数 "newEndTime"。预期格式: HH:MM (24小时制)`;
+        } else if (error.message.includes(`doesn't understand the "calendar" message`)) {
+          errorMsg = `日历 "${calendar}" 未找到。请使用 list-calendars 查看可用日历`;
+        } else if (error.message.includes('not allowed') || error.message.includes('permission')) {
+          errorMsg = `权限错误。请检查系统设置 → 隐私与安全性 → 日历`;
+        }
+        results.push(`❌ "${correction.keyword || '(未指定)'}" - 修正失败: ${errorMsg}`);
         failCount++;
       }
     }
@@ -674,9 +834,151 @@ class MacOSCalendarServer {
   }
 
   async run() {
+    const transportMode = process.env.MCP_TRANSPORT || 'stdio';
+
+    if (transportMode === 'http') {
+      await this.runHTTP();
+    } else {
+      await this.runStdio();
+    }
+  }
+
+  async runStdio() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     console.error('macOS Calendar MCP Server running on stdio');
+  }
+
+  async runHTTP() {
+    const app = express();
+    app.use(express.json());
+
+    const host = process.env.MCP_HTTP_HOST || '0.0.0.0';
+    const port = parseInt(process.env.MCP_HTTP_PORT || '3000', 10);
+
+    // Map to store transports by session ID
+    const transports = {};
+
+    // MCP POST endpoint
+    const mcpPostHandler = async (req, res) => {
+      const sessionId = req.headers['mcp-session-id'];
+
+      try {
+        let transport;
+        if (sessionId && transports[sessionId]) {
+          // Reuse existing transport
+          transport = transports[sessionId];
+        } else if (!sessionId && isInitializeRequest(req.body)) {
+          // New initialization request
+          transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (sessionId) => {
+              console.error(`Session initialized with ID: ${sessionId}`);
+              transports[sessionId] = transport;
+            }
+          });
+
+          // Set up onclose handler to clean up transport
+          transport.onclose = () => {
+            const sid = transport.sessionId;
+            if (sid && transports[sid]) {
+              console.error(`Transport closed for session ${sid}`);
+              delete transports[sid];
+            }
+          };
+
+          // Connect the transport to the MCP server
+          await this.server.connect(transport);
+          await transport.handleRequest(req, res, req.body);
+          return; // Already handled
+        } else {
+          // Invalid request - no session ID or not initialization request
+          res.status(400).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32000,
+              message: 'Bad Request: No valid session ID provided'
+            },
+            id: null
+          });
+          return;
+        }
+
+        // Handle the request with existing transport
+        await transport.handleRequest(req, res, req.body);
+      } catch (error) {
+        console.error('Error handling MCP request:', error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32603,
+              message: 'Internal server error'
+            },
+            id: null
+          });
+        }
+      }
+    };
+
+    // Handle GET requests for SSE streams
+    const mcpGetHandler = async (req, res) => {
+      const sessionId = req.headers['mcp-session-id'];
+      if (!sessionId || !transports[sessionId]) {
+        res.status(400).send('Invalid or missing session ID');
+        return;
+      }
+
+      const transport = transports[sessionId];
+      await transport.handleRequest(req, res);
+    };
+
+    // Handle DELETE requests for session termination
+    const mcpDeleteHandler = async (req, res) => {
+      const sessionId = req.headers['mcp-session-id'];
+      if (!sessionId || !transports[sessionId]) {
+        res.status(400).send('Invalid or missing session ID');
+        return;
+      }
+
+      try {
+        const transport = transports[sessionId];
+        await transport.handleRequest(req, res);
+      } catch (error) {
+        console.error('Error handling session termination:', error);
+        if (!res.headersSent) {
+          res.status(500).send('Error processing session termination');
+        }
+      }
+    };
+
+    // Set up routes
+    app.post('/mcp', mcpPostHandler);
+    app.get('/mcp', mcpGetHandler);
+    app.delete('/mcp', mcpDeleteHandler);
+
+    // Health check endpoint
+    app.get('/health', (req, res) => {
+      res.json({ status: 'ok' });
+    });
+
+    app.listen(port, host, () => {
+      console.error(`macOS Calendar MCP Server running on http://${host}:${port}/mcp`);
+    });
+
+    // Handle server shutdown
+    process.on('SIGINT', async () => {
+      console.error('Shutting down server...');
+      for (const sessionId in transports) {
+        try {
+          await transports[sessionId].close();
+          delete transports[sessionId];
+        } catch (error) {
+          console.error(`Error closing transport for session ${sessionId}:`, error);
+        }
+      }
+      process.exit(0);
+    });
   }
 }
 

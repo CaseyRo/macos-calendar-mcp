@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node macos-calendar-mcp-sdk.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "NODE_OPTIONS='--experimental-vm-modules --localstorage-file=/tmp/jest-localstorage' node --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js",
+    "test:watch": "NODE_OPTIONS='--experimental-vm-modules --localstorage-file=/tmp/jest-localstorage' node --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js --watch"
   },
   "keywords": [
     "mcp",
@@ -36,6 +37,14 @@
     "darwin"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.15.0"
+    "@modelcontextprotocol/sdk": "^1.15.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.10.1",
+    "jest": "^30.2.0"
   }
 }
