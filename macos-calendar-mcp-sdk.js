@@ -9,7 +9,10 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { execSync, spawn } from "child_process";
+import { execSync, spawn, exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import express from "express";
@@ -1184,6 +1187,8 @@ export class MacOSCalendarServer {
         }
 
         try {
+            console.error(`[search] Starting search for query: "${query}"`);
+
             // Get all calendars first
             const calendarsScript = `tell application "Calendar" to get name of calendars`;
             const calendarsResult = execSync(`osascript -e '${calendarsScript}'`, { encoding: "utf8" });
@@ -1192,23 +1197,46 @@ export class MacOSCalendarServer {
                 .split(", ")
                 .filter((cal) => cal && cal.trim());
 
+            console.error(`[search] Found ${calendars.length} calendars to search`);
             const allResults = [];
 
             // Search across all calendars
             for (const calendar of calendars) {
                 try {
+                    console.error(`[search] Searching calendar: "${calendar}"`);
+
                     // Escape quotes in calendar name and query for AppleScript
                     const escapedCalendar = calendar.replace(/"/g, '\\"');
                     const escapedQuery = query.replace(/"/g, '\\"');
 
+                    // Optimize search: only search events from the past year to future
+                    // This prevents searching through thousands of old events which causes hanging
                     const script = `
                         tell application "Calendar"
                             set theCalendar to calendar "${escapedCalendar}"
-                            set allEvents to every event of theCalendar
+
+                            -- Only search events within the date range (past year to future year)
+                            set searchStart to (current date) - (365 * days)
+                            set searchEnd to (current date) + (365 * days)
+
+                            -- Use date filtering to limit the search scope
+                            -- Limit to 500 events max to prevent timeouts on large calendars
+                            set allEvents to (every event of theCalendar whose start date ≥ searchStart and start date ≤ searchEnd)
+                            set eventCount to count of allEvents
+
+                            -- If too many events, limit to first 500
+                            if eventCount > 500 then
+                                set allEvents to items 1 thru 500 of allEvents
+                            end if
 
                             set matchingEvents to {}
+                            set maxResults to 50
+
                             repeat with anEvent in allEvents
                                 try
+                                    -- Exit early if we've found enough results (OpenAI limits to 50)
+                                    if (count of matchingEvents) ≥ maxResults then exit repeat
+
                                     if (summary of anEvent) contains "${escapedQuery}" or (description of anEvent) contains "${escapedQuery}" or (location of anEvent) contains "${escapedQuery}" then
                                         set eventInfo to (summary of anEvent) & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & (description of anEvent) & "|" & (location of anEvent)
                                         set end of matchingEvents to eventInfo
@@ -1222,12 +1250,65 @@ export class MacOSCalendarServer {
                         end tell
                     `;
 
-                    // Use execSync with maxBuffer to prevent hanging on large outputs
-                    const result = execSync(`osascript -e '${script}'`, {
-                        encoding: "utf8",
-                        maxBuffer: 10 * 1024 * 1024 // 10MB buffer
+                    // Use execAsync with timeout to prevent hanging
+                    // This prevents the process from blocking indefinitely
+                    const timeout = 15000; // 15 second timeout per calendar (reduced since we limit events)
+                    let childProcess;
+                    let timeoutId;
+
+                    const execPromise = new Promise((resolve, reject) => {
+                        const startTime = Date.now();
+                        childProcess = exec(
+                            `osascript -e '${script}'`,
+                            {
+                                encoding: "utf8",
+                                maxBuffer: 10 * 1024 * 1024 // 10MB buffer
+                            },
+                            (error, stdout, stderr) => {
+                                const duration = Date.now() - startTime;
+                                console.error(`[search] Calendar "${calendar}" completed in ${duration}ms`);
+
+                                if (error) {
+                                    console.error(`[search] Error in calendar "${calendar}":`, error.message);
+                                    reject(error);
+                                } else {
+                                    resolve({ stdout, stderr });
+                                }
+                            }
+                        );
                     });
-                    const events = result.trim();
+
+                    // Add timeout that kills the process
+                    const timeoutPromise = new Promise((_, reject) => {
+                        timeoutId = setTimeout(() => {
+                            console.error(`[search] Timeout after ${timeout}ms for calendar "${calendar}"`);
+                            if (childProcess && !childProcess.killed) {
+                                console.error(`[search] Killing process for calendar "${calendar}"`);
+                                childProcess.kill("SIGTERM");
+                                // Force kill after a short delay if still running
+                                setTimeout(() => {
+                                    if (childProcess && !childProcess.killed) {
+                                        console.error(`[search] Force killing process for calendar "${calendar}"`);
+                                        childProcess.kill("SIGKILL");
+                                    }
+                                }, 1000);
+                            }
+                            reject(new Error(`Search timeout after ${timeout}ms for calendar "${calendar}"`));
+                        }, timeout);
+                    });
+
+                    let events = "";
+                    try {
+                        const result = await Promise.race([execPromise, timeoutPromise]);
+                        clearTimeout(timeoutId);
+                        events = (result.stdout || "").trim();
+                        console.error(`[search] Found events in calendar "${calendar}": ${events ? events.split(",").length : 0}`);
+                    } catch (timeoutError) {
+                        clearTimeout(timeoutId);
+                        // If timeout or other error, skip this calendar and continue
+                        console.error(`[search] Skipping calendar "${calendar}":`, timeoutError.message);
+                        continue;
+                    }
 
                     if (events && events !== '""') {
                         const eventList = events.split(",").map((event) => event.trim());
@@ -1266,7 +1347,10 @@ export class MacOSCalendarServer {
                             } catch (itemError) {
                                 // Skip individual events that fail to process
                                 // Continue with next event
-                                console.error(`Error processing event in calendar ${calendar}:`, itemError);
+                                // Only log in development/debug mode to avoid noise
+                                if (process.env.DEBUG) {
+                                    console.error(`Error processing event in calendar ${calendar}:`, itemError);
+                                }
                                 continue;
                             }
                         }
@@ -1274,23 +1358,31 @@ export class MacOSCalendarServer {
                 } catch (error) {
                     // Skip calendars that fail (e.g., permission issues, calendar not found)
                     // Continue searching other calendars
-                    console.error(`Error searching calendar ${calendar}:`, error.message);
+                    // Only log in development/debug mode to avoid noise
+                    if (process.env.DEBUG) {
+                        console.error(`Error searching calendar ${calendar}:`, error.message);
+                    }
                     continue;
                 }
             }
 
-            // Return OpenAI-compatible format
+            // Limit total results to 50 (OpenAI's limit)
+            const limitedResults = allResults.slice(0, 50);
+            console.error(`[search] Search complete. Found ${allResults.length} total results (returning ${limitedResults.length} due to OpenAI limit)`);
+
+            // Return OpenAI-compatible format (limited to 50 results)
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify({ results: allResults })
+                        text: JSON.stringify({ results: limitedResults })
                     }
                 ]
             };
         } catch (error) {
             // Log error for debugging
-            console.error("Search error:", error.message);
+            console.error("[search] Fatal error:", error.message);
+            console.error("[search] Error stack:", error.stack);
             // Return empty results on error (per OpenAI spec)
             return {
                 content: [
@@ -1298,7 +1390,8 @@ export class MacOSCalendarServer {
                         type: "text",
                         text: JSON.stringify({ results: [], error: error.message })
                     }
-                ]
+                ],
+                isError: true
             };
         }
     }
@@ -1581,5 +1674,21 @@ export class MacOSCalendarServer {
     }
 }
 
+// Handle unhandled promise rejections
+process.on("unhandledRejection", (reason, promise) => {
+    console.error("Unhandled Rejection at:", promise, "reason:", reason);
+    // Don't exit - keep the server running
+});
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (error) => {
+    console.error("Uncaught Exception:", error);
+    // Don't exit - keep the server running
+});
+
 const server = new MacOSCalendarServer();
-server.run().catch(console.error);
+server.run().catch((error) => {
+    console.error("Error starting server:", error);
+    // Keep process alive even if there's an error
+    process.exit(1);
+});
