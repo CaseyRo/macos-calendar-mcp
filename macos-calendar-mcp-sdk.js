@@ -9,7 +9,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import express from "express";
@@ -1197,24 +1197,36 @@ export class MacOSCalendarServer {
             // Search across all calendars
             for (const calendar of calendars) {
                 try {
+                    // Escape quotes in calendar name and query for AppleScript
+                    const escapedCalendar = calendar.replace(/"/g, '\\"');
+                    const escapedQuery = query.replace(/"/g, '\\"');
+
                     const script = `
                         tell application "Calendar"
-                            set theCalendar to calendar "${calendar}"
+                            set theCalendar to calendar "${escapedCalendar}"
                             set allEvents to every event of theCalendar
 
                             set matchingEvents to {}
                             repeat with anEvent in allEvents
-                                if (summary of anEvent) contains "${query}" or (description of anEvent) contains "${query}" or (location of anEvent) contains "${query}" then
-                                    set eventInfo to (summary of anEvent) & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & (description of anEvent) & "|" & (location of anEvent)
-                                    set end of matchingEvents to eventInfo
-                                end if
+                                try
+                                    if (summary of anEvent) contains "${escapedQuery}" or (description of anEvent) contains "${escapedQuery}" or (location of anEvent) contains "${escapedQuery}" then
+                                        set eventInfo to (summary of anEvent) & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & (description of anEvent) & "|" & (location of anEvent)
+                                        set end of matchingEvents to eventInfo
+                                    end if
+                                on error
+                                    -- Skip events that cause errors
+                                end try
                             end repeat
 
                             return matchingEvents as string
                         end tell
                     `;
 
-                    const result = execSync(`osascript -e '${script}'`, { encoding: "utf8" });
+                    // Use execSync with maxBuffer to prevent hanging on large outputs
+                    const result = execSync(`osascript -e '${script}'`, {
+                        encoding: "utf8",
+                        maxBuffer: 10 * 1024 * 1024 // 10MB buffer
+                    });
                     const events = result.trim();
 
                     if (events && events !== '""') {
@@ -1225,23 +1237,44 @@ export class MacOSCalendarServer {
                             const [title, startDateStr, endDateStr, description, location] = eventStr.split("|");
                             if (!title) continue;
 
-                            // Parse start date for ID generation
-                            const startDate = new Date(startDateStr);
+                            try {
+                                // Parse start date for ID generation
+                                // AppleScript returns dates in format like "Monday, January 15, 2025 at 2:00:00 PM"
+                                // Try to parse it, but if it fails, use a fallback
+                                let startDate;
+                                try {
+                                    startDate = new Date(startDateStr);
+                                    // Check if date is valid
+                                    if (isNaN(startDate.getTime())) {
+                                        // Fallback: use current date if parsing fails
+                                        startDate = new Date();
+                                    }
+                                } catch (dateError) {
+                                    // Fallback to current date if parsing fails
+                                    startDate = new Date();
+                                }
 
-                            // Generate stable ID
-                            const eventId = this.generateEventId(calendar, title, startDate);
-                            const url = this.generateEventUrl(eventId);
+                                // Generate stable ID
+                                const eventId = this.generateEventId(calendar, title, startDate);
+                                const url = this.generateEventUrl(eventId);
 
-                            allResults.push({
-                                id: eventId,
-                                title: title || "Untitled Event",
-                                url: url
-                            });
+                                allResults.push({
+                                    id: eventId,
+                                    title: title || "Untitled Event",
+                                    url: url
+                                });
+                            } catch (itemError) {
+                                // Skip individual events that fail to process
+                                // Continue with next event
+                                console.error(`Error processing event in calendar ${calendar}:`, itemError);
+                                continue;
+                            }
                         }
                     }
                 } catch (error) {
                     // Skip calendars that fail (e.g., permission issues, calendar not found)
                     // Continue searching other calendars
+                    console.error(`Error searching calendar ${calendar}:`, error.message);
                     continue;
                 }
             }
@@ -1256,12 +1289,14 @@ export class MacOSCalendarServer {
                 ]
             };
         } catch (error) {
+            // Log error for debugging
+            console.error("Search error:", error.message);
             // Return empty results on error (per OpenAI spec)
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify({ results: [] })
+                        text: JSON.stringify({ results: [], error: error.message })
                     }
                 ]
             };
