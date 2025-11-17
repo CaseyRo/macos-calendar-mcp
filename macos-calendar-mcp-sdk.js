@@ -1234,7 +1234,7 @@ export class MacOSCalendarServer {
 
                             repeat with anEvent in allEvents
                                 try
-                                    -- Exit early if we've found enough results (OpenAI limits to 50)
+                                    -- Exit early if we've found enough results - OpenAI limits to 50
                                     if (count of matchingEvents) ≥ maxResults then exit repeat
 
                                     if (summary of anEvent) contains "${escapedQuery}" or (description of anEvent) contains "${escapedQuery}" or (location of anEvent) contains "${escapedQuery}" then
