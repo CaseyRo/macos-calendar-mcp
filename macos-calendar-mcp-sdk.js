@@ -1211,55 +1211,47 @@ export class MacOSCalendarServer {
 
                     // Optimize search: only search events from the past year to future
                     // This prevents searching through thousands of old events which causes hanging
-                    const script = `
-                        tell application "Calendar"
-                            set theCalendar to calendar "${escapedCalendar}"
-
-                            -- Only search events within the date range (past year to future year)
-                            set searchStart to (current date) - (365 * days)
-                            set searchEnd to (current date) + (365 * days)
-
-                            -- Use date filtering to limit the search scope
-                            -- Limit to 500 events max to prevent timeouts on large calendars
-                            set allEvents to (every event of theCalendar whose start date ≥ searchStart and start date ≤ searchEnd)
-                            set eventCount to count of allEvents
-
-                            -- If too many events, limit to first 500
-                            if eventCount > 500 then
-                                set allEvents to items 1 thru 500 of allEvents
-                            end if
-
-                            set matchingEvents to {}
-                            set maxResults to 50
-
-                            repeat with anEvent in allEvents
-                                try
-                                    -- Exit early if we've found enough results - OpenAI limits to 50
-                                    if (count of matchingEvents) ≥ maxResults then exit repeat
-
-                                    if (summary of anEvent) contains "${escapedQuery}" or (description of anEvent) contains "${escapedQuery}" or (location of anEvent) contains "${escapedQuery}" then
-                                        set eventInfo to (summary of anEvent) & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & (description of anEvent) & "|" & (location of anEvent)
-                                        set end of matchingEvents to eventInfo
-                                    end if
-                                on error
-                                    -- Skip events that cause errors
-                                end try
-                            end repeat
-
-                            return matchingEvents as string
-                        end tell
-                    `;
+                    // Build script without comments to avoid shell parsing issues
+                    // Further optimized: limit to 200 events and exit early at 50 matches
+                    const script = `tell application "Calendar"
+    set theCalendar to calendar "${escapedCalendar}"
+    set searchStart to (current date) - (365 * days)
+    set searchEnd to (current date) + (365 * days)
+    set allEvents to (every event of theCalendar whose start date ≥ searchStart and start date ≤ searchEnd)
+    set eventCount to count of allEvents
+    if eventCount > 200 then
+        set allEvents to items 1 thru 200 of allEvents
+    end if
+    set matchingEvents to {}
+    set maxResults to 50
+    repeat with anEvent in allEvents
+        try
+            if (count of matchingEvents) ≥ maxResults then exit repeat
+            set eventSummary to summary of anEvent
+            set eventDesc to description of anEvent
+            set eventLoc to location of anEvent
+            if eventSummary contains "${escapedQuery}" or eventDesc contains "${escapedQuery}" or eventLoc contains "${escapedQuery}" then
+                set eventInfo to eventSummary & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & eventDesc & "|" & eventLoc
+                set end of matchingEvents to eventInfo
+            end if
+        on error
+        end try
+    end repeat
+    return matchingEvents as string
+end tell`;
 
                     // Use execAsync with timeout to prevent hanging
                     // This prevents the process from blocking indefinitely
-                    const timeout = 15000; // 15 second timeout per calendar (reduced since we limit events)
+                    const timeout = 20000; // 20 second timeout per calendar (increased for large calendars with 200 events)
                     let childProcess;
                     let timeoutId;
 
                     const execPromise = new Promise((resolve, reject) => {
                         const startTime = Date.now();
+                        // Escape single quotes in script for shell execution
+                        const escapedScript = script.replace(/'/g, "'\\''");
                         childProcess = exec(
-                            `osascript -e '${script}'`,
+                            `osascript -e '${escapedScript}'`,
                             {
                                 encoding: "utf8",
                                 maxBuffer: 10 * 1024 * 1024 // 10MB buffer
