@@ -935,26 +935,96 @@ export class MacOSCalendarServer {
     async searchEvents(args) {
         const { query, calendar = "个人" } = args;
 
-        const script = `
-      tell application "Calendar"
-        set theCalendar to calendar "${calendar}"
-        set allEvents to every event of theCalendar
+        console.error(`[search-events] Starting search for query: "${query}" in calendar: "${calendar}"`);
 
-        set matchingEvents to {}
-        repeat with anEvent in allEvents
-          if (summary of anEvent) contains "${query}" or (description of anEvent) contains "${query}" then
-            set eventInfo to (summary of anEvent) & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & (description of anEvent) & "|" & (location of anEvent)
-            set end of matchingEvents to eventInfo
-          end if
-        end repeat
+        // Escape quotes for AppleScript
+        const escapedCalendar = calendar.replace(/"/g, '\\"');
+        const escapedQuery = query.replace(/"/g, '\\"');
 
-        return matchingEvents as string
-      end tell
-    `;
+        // Optimized script with date filtering and event limits
+        const script = `tell application "Calendar"
+    set theCalendar to calendar "${escapedCalendar}"
+    set searchStart to (current date) - (365 * days)
+    set searchEnd to (current date) + (365 * days)
+    set allEvents to (every event of theCalendar whose start date ≥ searchStart and start date ≤ searchEnd)
+    set eventCount to count of allEvents
+    if eventCount > 200 then
+        set allEvents to items 1 thru 200 of allEvents
+    end if
+    set matchingEvents to {}
+    repeat with anEvent in allEvents
+        try
+            set eventSummary to summary of anEvent
+            set eventDesc to description of anEvent
+            set eventLoc to location of anEvent
+            if eventSummary contains "${escapedQuery}" or eventDesc contains "${escapedQuery}" or eventLoc contains "${escapedQuery}" then
+                set eventInfo to eventSummary & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & eventDesc & "|" & eventLoc
+                set end of matchingEvents to eventInfo
+            end if
+        on error
+        end try
+    end repeat
+    return matchingEvents as string
+end tell`;
 
         try {
-            const result = execSync(`osascript -e '${script}'`, { encoding: "utf8" });
-            const events = result.trim();
+            // Use async exec with timeout to prevent hanging
+            const timeout = 20000; // 20 second timeout
+            let childProcess;
+            let timeoutId;
+
+            const execPromise = new Promise((resolve, reject) => {
+                const startTime = Date.now();
+                // Escape single quotes in script for shell execution
+                const escapedScript = script.replace(/'/g, "'\\''");
+                childProcess = exec(
+                    `osascript -e '${escapedScript}'`,
+                    {
+                        encoding: "utf8",
+                        maxBuffer: 10 * 1024 * 1024 // 10MB buffer
+                    },
+                    (error, stdout, stderr) => {
+                        const duration = Date.now() - startTime;
+                        console.error(`[search-events] Calendar "${calendar}" completed in ${duration}ms`);
+
+                        if (error) {
+                            console.error(`[search-events] Error in calendar "${calendar}":`, error.message);
+                            reject(error);
+                        } else {
+                            resolve({ stdout, stderr });
+                        }
+                    }
+                );
+            });
+
+            // Add timeout that kills the process
+            const timeoutPromise = new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    console.error(`[search-events] Timeout after ${timeout}ms for calendar "${calendar}"`);
+                    if (childProcess && !childProcess.killed) {
+                        console.error(`[search-events] Killing process for calendar "${calendar}"`);
+                        childProcess.kill("SIGTERM");
+                        setTimeout(() => {
+                            if (childProcess && !childProcess.killed) {
+                                console.error(`[search-events] Force killing process for calendar "${calendar}"`);
+                                childProcess.kill("SIGKILL");
+                            }
+                        }, 1000);
+                    }
+                    reject(new Error(`Search timeout after ${timeout}ms for calendar "${calendar}"`));
+                }, timeout);
+            });
+
+            let result;
+            try {
+                result = await Promise.race([execPromise, timeoutPromise]);
+                clearTimeout(timeoutId);
+            } catch (timeoutError) {
+                clearTimeout(timeoutId);
+                throw timeoutError;
+            }
+
+            const events = (result.stdout || "").trim();
 
             if (!events || events === '""') {
                 return {
@@ -982,6 +1052,8 @@ export class MacOSCalendarServer {
                 };
             });
 
+            console.error(`[search-events] Found ${eventList.length} events in calendar "${calendar}"`);
+
             return {
                 content: [
                     {
@@ -995,6 +1067,7 @@ export class MacOSCalendarServer {
                 ]
             };
         } catch (error) {
+            console.error(`[search-events] Fatal error:`, error.message);
             let errorMessage = `搜索事件失败: ${error.message}`;
             let errorDetails = { error: errorMessage };
 
@@ -1009,6 +1082,9 @@ export class MacOSCalendarServer {
             } else if (error.message.includes("not allowed") || error.message.includes("permission")) {
                 errorDetails.permissionError = true;
                 errorDetails.suggestion = "macOS 需要授予 Calendar 应用权限。请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。";
+            } else if (error.message.includes("timeout")) {
+                errorDetails.timeout = true;
+                errorDetails.suggestion = `搜索超时。日历 "${calendar}" 可能包含太多事件。请尝试搜索更具体的关键词。`;
             }
 
             throw new Error(JSON.stringify(errorDetails));
