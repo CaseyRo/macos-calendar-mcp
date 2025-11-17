@@ -18,6 +18,8 @@ describe('MacOSCalendarServer', () => {
   let server;
 
   beforeEach(() => {
+    // Set language to English for consistent test results
+    process.env.LANGUAGE = 'en';
     server = new MacOSCalendarServer();
     mockExecSync.mockClear();
   });
@@ -37,13 +39,13 @@ describe('MacOSCalendarServer', () => {
     it('should throw error for invalid date format', () => {
       expect(() => {
         server.formatDateForAppleScript('invalid-date');
-      }).toThrow(/无效的日期格式/);
+      }).toThrow(/Invalid date format/);
     });
 
     it('should throw error for missing time', () => {
       expect(() => {
         server.formatDateForAppleScript('2025-01-15');
-      }).toThrow(/无效的日期格式/);
+      }).toThrow(/Invalid date format/);
     });
   });
 
@@ -53,9 +55,9 @@ describe('MacOSCalendarServer', () => {
 
       const result = await server.listCalendars();
 
-      expect(result.content[0].text).toContain('可用日历');
-      expect(result.content[0].text).toContain('Personal');
-      expect(result.content[0].text).toContain('Work');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.calendars).toContain('Personal');
+      expect(resultText.calendars).toContain('Work');
       expect(mockExecSync).toHaveBeenCalledWith(
         expect.stringContaining('tell application "Calendar"'),
         { encoding: 'utf8' }
@@ -69,13 +71,13 @@ describe('MacOSCalendarServer', () => {
         throw error;
       });
 
-      await expect(server.listCalendars()).rejects.toThrow(/权限错误/);
+      await expect(server.listCalendars()).rejects.toThrow(/Permission error|Calendar app permissions/i);
     });
   });
 
   describe('createEvent', () => {
     it('should validate required parameters', async () => {
-      await expect(server.createEvent({})).rejects.toThrow(/缺少必需参数/);
+      await expect(server.createEvent({})).rejects.toThrow(/Missing required parameter/i);
     });
 
     it('should validate date format', async () => {
@@ -85,7 +87,7 @@ describe('MacOSCalendarServer', () => {
           startDate: 'invalid',
           endDate: '2025-01-15 15:00',
         })
-      ).rejects.toThrow(/日期格式错误/);
+      ).rejects.toThrow(/Date format error/i);
     });
 
     it('should create event successfully', async () => {
@@ -98,18 +100,19 @@ describe('MacOSCalendarServer', () => {
         calendar: 'Personal',
       });
 
-      expect(result.content[0].text).toContain('事件创建成功');
-      expect(result.content[0].text).toContain('Test Event');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.success).toBe(true);
+      expect(resultText.event.title).toBe('Test Event');
     });
   });
 
   describe('createBatchEvents', () => {
     it('should validate events array is required', async () => {
-      await expect(server.createBatchEvents({})).rejects.toThrow(/缺少必需参数 "events"/);
+      await expect(server.createBatchEvents({})).rejects.toThrow(/Missing required parameter.*events/i);
     });
 
     it('should validate events array is not empty', async () => {
-      await expect(server.createBatchEvents({ events: [] })).rejects.toThrow(/事件数组为空/);
+      await expect(server.createBatchEvents({ events: [] })).rejects.toThrow(/Events array is empty/i);
     });
 
     it('should create multiple events successfully', async () => {
@@ -123,7 +126,8 @@ describe('MacOSCalendarServer', () => {
         calendar: 'Work',
       });
 
-      expect(result.content[0].text).toContain('成功: 2个');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.successCount).toBe(2);
       expect(result.content[0].text).toContain('Event 1');
       expect(result.content[0].text).toContain('Event 2');
     });
@@ -144,8 +148,9 @@ describe('MacOSCalendarServer', () => {
         ],
       });
 
-      expect(result.content[0].text).toContain('成功: 1个');
-      expect(result.content[0].text).toContain('失败: 1个');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.successCount).toBe(1);
+      expect(resultText.failCount).toBe(1);
     });
 
     it('should validate individual event parameters', async () => {
@@ -156,8 +161,9 @@ describe('MacOSCalendarServer', () => {
         ],
       });
 
-      expect(result.content[0].text).toContain('失败');
-      expect(result.content[0].text).toContain('缺少必需参数 "title"');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.results.some(r => !r.success)).toBe(true);
+      expect(result.content[0].text).toContain('Missing required parameter');
     });
   });
 
@@ -167,8 +173,9 @@ describe('MacOSCalendarServer', () => {
         keyword: 'test',
       });
 
-      expect(result.content[0].text).toContain('请确认删除操作');
-      expect(result.content[0].text).toContain('confirm: true');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.requiresConfirmation).toBe(true);
+      expect(result.content[0].text).toContain('confirm');
     });
 
     it('should delete events with confirmation', async () => {
@@ -180,8 +187,8 @@ describe('MacOSCalendarServer', () => {
         calendar: 'Work',
       });
 
-      expect(result.content[0].text).toContain('删除完成');
-      expect(result.content[0].text).toContain('5 个');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.deletedCount).toBe(5);
     });
 
     it('should handle calendar not found', async () => {
@@ -195,7 +202,7 @@ describe('MacOSCalendarServer', () => {
           confirm: true,
           calendar: 'NonExistent',
         })
-      ).rejects.toThrow(/日历.*未找到/);
+      ).rejects.toThrow(/Calendar.*not found/i);
     });
   });
 
@@ -205,7 +212,8 @@ describe('MacOSCalendarServer', () => {
 
       const result = await server.listTodayEvents({ calendar: 'Personal' });
 
-      expect(result.content[0].text).toContain('今日事件');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.events).toBeDefined();
       expect(result.content[0].text).toContain('Event 1');
       expect(result.content[0].text).toContain('Event 2');
     });
@@ -215,7 +223,8 @@ describe('MacOSCalendarServer', () => {
 
       const result = await server.listTodayEvents({ calendar: 'Personal' });
 
-      expect(result.content[0].text).toContain('今日无事件');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.events).toEqual([]);
     });
 
     it('should handle calendar not found', async () => {
@@ -223,19 +232,19 @@ describe('MacOSCalendarServer', () => {
         throw new Error(`Calendar doesn't understand the "calendar" message`);
       });
 
-      await expect(server.listTodayEvents({ calendar: 'NonExistent' })).rejects.toThrow(/日历.*未找到/);
+      await expect(server.listTodayEvents({ calendar: 'NonExistent' })).rejects.toThrow(/Calendar.*not found/i);
     });
   });
 
   describe('listWeekEvents', () => {
     it('should validate weekStart is required', async () => {
-      await expect(server.listWeekEvents({})).rejects.toThrow(/缺少必需参数 "weekStart"/);
+      await expect(server.listWeekEvents({})).rejects.toThrow(/Missing required parameter.*weekStart/i);
     });
 
     it('should validate weekStart format', async () => {
       await expect(
         server.listWeekEvents({ weekStart: 'invalid' })
-      ).rejects.toThrow(/日期格式错误/);
+      ).rejects.toThrow(/Date format error/i);
     });
 
     it('should return week events', async () => {
@@ -246,7 +255,8 @@ describe('MacOSCalendarServer', () => {
         calendar: 'Work',
       });
 
-      expect(result.content[0].text).toContain('这周的事件');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.events).toBeDefined();
       expect(result.content[0].text).toContain('Event 1');
     });
 
@@ -257,17 +267,18 @@ describe('MacOSCalendarServer', () => {
         weekStart: '2025-01-15',
       });
 
-      expect(result.content[0].text).toContain('无事件');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.events).toEqual([]);
     });
   });
 
   describe('searchEvents', () => {
     it('should validate query is required', async () => {
-      await expect(server.searchEvents({})).rejects.toThrow(/缺少必需参数 "query"/);
+      await expect(server.searchEvents({})).rejects.toThrow(/Missing required parameter.*query/i);
     });
 
     it('should validate query is not empty', async () => {
-      await expect(server.searchEvents({ query: '' })).rejects.toThrow(/查询字符串为空/);
+      await expect(server.searchEvents({ query: '' })).rejects.toThrow(/query string is empty/i);
     });
 
     it('should return matching events', async () => {
@@ -278,7 +289,8 @@ describe('MacOSCalendarServer', () => {
         calendar: 'Work',
       });
 
-      expect(result.content[0].text).toContain('找到');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.events).toBeDefined();
       expect(result.content[0].text).toContain('Meeting');
     });
 
@@ -289,7 +301,8 @@ describe('MacOSCalendarServer', () => {
         query: 'nonexistent',
       });
 
-      expect(result.content[0].text).toContain('未找到');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.events).toEqual([]);
     });
 
     it('should handle calendar not found', async () => {
@@ -299,19 +312,19 @@ describe('MacOSCalendarServer', () => {
 
       await expect(
         server.searchEvents({ query: 'test', calendar: 'NonExistent' })
-      ).rejects.toThrow(/日历.*未找到/);
+      ).rejects.toThrow(/Calendar.*not found/i);
     });
   });
 
   describe('fixEventTimes', () => {
     it('should validate datePattern is required', async () => {
-      await expect(server.fixEventTimes({})).rejects.toThrow(/缺少必需参数 "datePattern"/);
+      await expect(server.fixEventTimes({})).rejects.toThrow(/Missing required parameter.*datePattern/i);
     });
 
     it('should validate corrections array is required', async () => {
       await expect(
         server.fixEventTimes({ datePattern: '2025-01-15' })
-      ).rejects.toThrow(/缺少必需参数 "corrections"/);
+      ).rejects.toThrow(/Missing required parameter.*corrections/i);
     });
 
     it('should fix event times successfully', async () => {
@@ -325,7 +338,8 @@ describe('MacOSCalendarServer', () => {
         ],
       });
 
-      expect(result.content[0].text).toContain('成功修正');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.successCount).toBeGreaterThan(0);
       expect(result.content[0].text).toContain('Meeting');
     });
 
@@ -340,7 +354,8 @@ describe('MacOSCalendarServer', () => {
         ],
       });
 
-      expect(result.content[0].text).toContain('未找到匹配的事件');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.results.some(r => r.error && r.error.includes('No matching events'))).toBe(true);
     });
 
     it('should handle date format errors', async () => {
@@ -352,8 +367,9 @@ describe('MacOSCalendarServer', () => {
         ],
       });
 
-      expect(result.content[0].text).toContain('失败');
-      expect(result.content[0].text).toContain('日期格式错误');
+      const resultText = JSON.parse(result.content[0].text);
+      expect(resultText.results.some(r => !r.success && r.error)).toBe(true);
+      expect(result.content[0].text).toMatch(/Date format error|format.*invalid/i);
     });
   });
 
@@ -371,7 +387,7 @@ describe('MacOSCalendarServer', () => {
           endDate: '2025-01-15 15:00',
           calendar: 'NonExistent',
         })
-      ).rejects.toThrow(/日历.*未找到/);
+      ).rejects.toThrow(/Calendar.*not found/i);
     });
   });
 });

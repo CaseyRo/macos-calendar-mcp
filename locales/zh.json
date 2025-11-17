@@ -1,0 +1,107 @@
+{
+  "tools": {
+    "listCalendars": {
+      "description": "列出所有macOS日历"
+    },
+    "createEvent": {
+      "description": "在macOS日历中创建新事件",
+      "calendar": "日历名称",
+      "calendarDefault": "个人",
+      "title": "事件标题",
+      "startDate": "开始时间，格式：YYYY-MM-DD HH:MM",
+      "endDate": "结束时间，格式：YYYY-MM-DD HH:MM",
+      "description": "事件描述",
+      "location": "事件地点",
+      "allDay": "是否为全天事件。如果为true，事件将创建为全天事件，开始时间将调整为当天的00:00，结束时间将调整为结束日期后一天的00:00"
+    },
+    "createBatchEvents": {
+      "description": "批量创建事件",
+      "events": "事件列表",
+      "targetCalendar": "目标日历",
+      "targetCalendarDefault": "工作"
+    },
+    "deleteEventsByKeyword": {
+      "description": "根据关键词删除事件",
+      "keyword": "要删除的事件关键词",
+      "calendar": "日历名称",
+      "calendarDefault": "工作",
+      "confirm": "确认删除"
+    },
+    "listTodayEvents": {
+      "description": "列出今天的事件",
+      "calendar": "日历名称",
+      "calendarDefault": "个人"
+    },
+    "listWeekEvents": {
+      "description": "列出指定周的事件",
+      "weekStart": "周开始日期，格式：YYYY-MM-DD",
+      "calendar": "日历名称",
+      "calendarDefault": "工作"
+    },
+    "searchEvents": {
+      "description": "搜索事件",
+      "query": "搜索关键词",
+      "calendar": "日历名称",
+      "calendarDefault": "个人"
+    },
+    "fixEventTimes": {
+      "description": "修正错误的事件时间（从凌晨修正到正确时间）",
+      "calendar": "日历名称",
+      "calendarDefault": "工作",
+      "datePattern": "目标日期模式，如：2025-07-10",
+      "eventKeyword": "事件关键词",
+      "newStartTime": "新开始时间 HH:MM",
+      "newEndTime": "新结束时间 HH:MM",
+      "corrections": "时间修正列表"
+    }
+  },
+  "errors": {
+    "invalidDateFormat": "无效的日期格式: {{dateStr}}，请使用 YYYY-MM-DD HH:MM 格式",
+    "dateFormatError": "日期格式错误：{{field}} \"{{value}}\" 格式无效。",
+    "dateFormatExpected": "YYYY-MM-DD HH:MM (24小时制)",
+    "dateFormatExample": "2025-01-15 14:30",
+    "missingRequiredParam": "缺少必需参数 \"{{param}}\"。",
+    "missingTitle": "缺少必需参数 \"title\"。",
+    "missingTitleSuggestion": "请提供事件标题。示例: {\"title\": \"Team Meeting\", \"startDate\": \"2025-01-15 14:00\", \"endDate\": \"2025-01-15 15:00\"}",
+    "missingStartDate": "缺少必需参数 \"startDate\"。",
+    "missingEndDate": "缺少必需参数 \"endDate\"。",
+    "missingKeyword": "缺少必需参数 \"keyword\"。请提供要删除的事件关键词。",
+    "calendarNotFound": "日历 \"{{calendar}}\" 未找到。请使用 list-calendars 工具查看可用的日历名称。注意：日历名称区分大小写，必须完全匹配。",
+    "permissionError": "macOS 需要授予 Calendar 应用权限。请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。",
+    "calendarAppNotFound": "Calendar 应用未找到。请确保 macOS Calendar 应用已安装且可访问。",
+    "failedToListCalendars": "获取日历列表失败: {{error}}",
+    "failedToCreateEvent": "创建事件失败: {{error}}",
+    "failedToDeleteEvents": "删除事件失败: {{error}}",
+    "failedToListTodayEvents": "获取今天的事件失败: {{error}}",
+    "failedToListWeekEvents": "获取周事件失败: {{error}}",
+    "failedToSearchEvents": "搜索事件失败: {{error}}",
+    "failedToFixEventTimes": "修正事件时间失败: {{error}}",
+    "weekStartFormatError": "日期格式错误：weekStart \"{{value}}\" 格式无效。",
+    "weekStartExpectedFormat": "YYYY-MM-DD",
+    "weekStartExample": "2025-01-15",
+    "missingNewStartTime": "缺少必需参数 \"newStartTime\"。预期格式: HH:MM (24小时制)",
+    "missingNewEndTime": "缺少必需参数 \"newEndTime\"。预期格式: HH:MM (24小时制)",
+    "permissionErrorShort": "权限错误。请检查系统设置 → 隐私与安全性 → 日历",
+    "calendarNotFoundShort": "日历 \"{{calendar}}\" 未找到。请使用 list-calendars 查看可用日历",
+    "unspecifiedKeyword": "(未指定)",
+    "missingEvents": "缺少必需参数 \"events\" 或格式不正确。",
+    "missingEventsSuggestion": "请提供一个事件数组。示例: {\"events\": [{\"title\": \"Event 1\", \"startDate\": \"2025-01-15 14:00\", \"endDate\": \"2025-01-15 15:00\"}]}",
+    "emptyEventsArray": "事件数组为空。",
+    "emptyEventsArraySuggestion": "请提供至少一个事件。",
+    "unnamedEvent": "(未命名)",
+    "missingDatePattern": "缺少必需参数 \"datePattern\"。",
+    "missingCorrections": "缺少必需参数 \"corrections\" 或数组为空。",
+    "missingCorrectionsSuggestion": "请提供一个修正数组。示例: {\"datePattern\": \"2025-01-15\", \"corrections\": [{\"keyword\": \"Meeting\", \"newStartTime\": \"14:00\", \"newEndTime\": \"15:00\"}]}",
+    "missingWeekStart": "缺少必需参数 \"weekStart\"。请使用格式: YYYY-MM-DD。示例: \"2025-01-15\"",
+    "missingQuery": "缺少必需参数 \"query\" 或查询字符串为空。",
+    "missingQuerySuggestion": "请提供搜索关键词。示例: {\"query\": \"meeting\"}",
+    "searchTimeout": "搜索超时。日历 \"{{calendar}}\" 可能包含太多事件。请尝试搜索更具体的关键词。",
+    "noMatchingEvents": "未找到匹配的事件",
+    "deleteConfirmationRequired": "请确认删除操作！将删除日历\"{{calendar}}\"中包含关键词\"{{keyword}}\"的所有事件。",
+    "deleteConfirmationSuggestion": "要执行删除，请设置 confirm: true"
+  },
+  "messages": {
+    "listTools": "列出工具"
+  }
+}
+

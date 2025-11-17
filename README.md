@@ -99,6 +99,8 @@ node macos-calendar-mcp-sdk.js
 
 **Note**: The `.env` file is git-ignored to prevent committing sensitive configuration. Never commit your `.env` file to version control.
 
+**Security**: This project uses `@dotenvx/dotenvx` for loading environment variables, which provides enhanced security features including optional encryption support. For additional security, you can encrypt your `.env` file using `dotenvx encrypt` (see [dotenvx documentation](https://dotenvx.com/docs) for details).
+
 #### Using Environment Variables
 
 You can also set environment variables directly:
@@ -217,20 +219,20 @@ Authentication may be added in future versions.
 
 ## Available Tools
 
-| Tool                       | Description                       | Parameters                                                             |
-| -------------------------- | --------------------------------- | ---------------------------------------------------------------------- |
-| `list-calendars`           | List all available calendars      | None                                                                   |
-| `create-event`             | Create a new calendar event       | `title`, `startDate`, `endDate`, `calendar`, `description`, `location` |
-| `create-batch-events`      | Create multiple events at once    | `events` (array), `calendar` (optional)                                |
-| `delete-events-by-keyword` | Delete events matching a keyword  | `keyword`, `calendar` (optional), `confirm` (boolean)                  |
-| `list-today-events`        | List today's events               | `calendar` (optional)                                                  |
-| `list-week-events`         | List events for a specific week   | `weekStart` (YYYY-MM-DD), `calendar` (optional)                        |
-| `search-events`            | Search events by keyword          | `query`, `calendar` (optional)                                         |
-| `fix-event-times`          | Fix event times for specific date | `calendar`, `datePattern` (YYYY-MM-DD), `corrections` (array)          |
+| Tool                       | Description                       | Parameters                                                                                  |
+| -------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `list-calendars`           | List all available calendars      | None                                                                                        |
+| `create-event`             | Create a new calendar event       | `title`, `startDate`, `endDate`, `calendar`, `description`, `location`, `allDay` (optional) |
+| `create-batch-events`      | Create multiple events at once    | `events` (array), `calendar` (optional). Each event can include `allDay` property           |
+| `delete-events-by-keyword` | Delete events matching a keyword  | `keyword`, `calendar` (optional), `confirm` (boolean)                                       |
+| `list-today-events`        | List today's events               | `calendar` (optional)                                                                       |
+| `list-week-events`         | List events for a specific week   | `weekStart` (YYYY-MM-DD), `calendar` (optional)                                             |
+| `search-events`            | Search events by keyword          | `query`, `calendar` (optional)                                                              |
+| `fix-event-times`          | Fix event times for specific date | `calendar`, `datePattern` (YYYY-MM-DD), `corrections` (array)                               |
 
 ## Examples
 
-### Create an Event
+### Create a Timed Event
 ```javascript
 {
   "title": "Team Meeting",
@@ -238,9 +240,27 @@ Authentication may be added in future versions.
   "endDate": "2025-07-05 15:00",
   "calendar": "Work",
   "description": "Weekly team sync",
-  "location": "Conference Room A"
+  "location": "Conference Room A",
+  "allDay": false
 }
 ```
+
+### Create an All-Day Event
+```javascript
+{
+  "title": "Holiday",
+  "startDate": "2025-12-25 00:00",
+  "endDate": "2025-12-25 23:59",
+  "calendar": "Personal",
+  "description": "Christmas Day",
+  "allDay": true
+}
+```
+
+**Note**: For all-day events, the `startDate` and `endDate` times are automatically adjusted:
+- Start time is set to 12:00 AM (00:00) on the start date
+- End time is set to 12:00 AM (00:00) on the day after the end date
+- The event will span the full days specified, regardless of the times provided in the date strings
 
 ### List Calendars
 ```javascript
@@ -268,6 +288,56 @@ Examples:
 - Uses native macOS time handling to avoid timezone conversion issues
 - All times are interpreted in your system's local timezone
 - No UTC conversion or daylight saving adjustments needed
+
+### All-Day Events
+
+When creating an all-day event (by setting `allDay: true`), the date interpretation works as follows:
+
+- **Start Date**: The time portion is ignored and set to 12:00 AM (00:00) on the specified date
+- **End Date**: The time portion is ignored and set to 12:00 AM (00:00) on the day **after** the specified end date
+
+**Example**: Creating an all-day event from January 15 to January 17:
+```javascript
+{
+  "title": "Conference",
+  "startDate": "2025-01-15 14:00",  // Time is ignored
+  "endDate": "2025-01-17 16:00",    // Time is ignored
+  "allDay": true
+}
+```
+
+This creates an all-day event that:
+- Starts at 12:00 AM on January 15, 2025
+- Ends at 12:00 AM on January 18, 2025 (day after end date)
+- Spans the full days of January 15, 16, and 17
+
+The event will appear in Calendar app as an all-day event covering those three days, without displaying specific times.
+
+### Batch Events with All-Day Support
+
+When using `create-batch-events`, each event in the array can have its own `allDay` property:
+
+```javascript
+{
+  "events": [
+    {
+      "title": "Team Meeting",
+      "startDate": "2025-07-05 14:00",
+      "endDate": "2025-07-05 15:00",
+      "allDay": false
+    },
+    {
+      "title": "Holiday",
+      "startDate": "2025-07-10 00:00",
+      "endDate": "2025-07-10 23:59",
+      "allDay": true
+    }
+  ],
+  "calendar": "Work"
+}
+```
+
+You can mix all-day and timed events in the same batch. Each event is processed independently according to its `allDay` setting.
 
 ## Supported Calendars
 

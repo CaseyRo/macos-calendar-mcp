@@ -1,0 +1,107 @@
+{
+  "tools": {
+    "listCalendars": {
+      "description": "Alle macOS-Kalender auflisten"
+    },
+    "createEvent": {
+      "description": "Neues Ereignis im macOS-Kalender erstellen",
+      "calendar": "Kalendername",
+      "calendarDefault": "Persönlich",
+      "title": "Ereignistitel",
+      "startDate": "Startzeit, Format: YYYY-MM-DD HH:MM",
+      "endDate": "Endzeit, Format: YYYY-MM-DD HH:MM",
+      "description": "Ereignisbeschreibung",
+      "location": "Ereignisort",
+      "allDay": "Ob dies ein ganztägiges Ereignis ist. Wenn true, wird das Ereignis als ganztägiges Ereignis erstellt, die Startzeit wird auf 00:00 des Tages eingestellt und die Endzeit wird auf 00:00 des Tages nach dem Enddatum eingestellt"
+    },
+    "createBatchEvents": {
+      "description": "Mehrere Ereignisse stapelweise erstellen",
+      "events": "Ereignisliste",
+      "targetCalendar": "Zielkalender",
+      "targetCalendarDefault": "Arbeit"
+    },
+    "deleteEventsByKeyword": {
+      "description": "Ereignisse nach Stichwort löschen",
+      "keyword": "Ereignis-Stichwort zum Löschen",
+      "calendar": "Kalendername",
+      "calendarDefault": "Arbeit",
+      "confirm": "Löschung bestätigen"
+    },
+    "listTodayEvents": {
+      "description": "Heutige Ereignisse auflisten",
+      "calendar": "Kalendername",
+      "calendarDefault": "Persönlich"
+    },
+    "listWeekEvents": {
+      "description": "Ereignisse für eine bestimmte Woche auflisten",
+      "weekStart": "Wochenstartdatum, Format: YYYY-MM-DD",
+      "calendar": "Kalendername",
+      "calendarDefault": "Arbeit"
+    },
+    "searchEvents": {
+      "description": "Ereignisse suchen",
+      "query": "Suchbegriff",
+      "calendar": "Kalendername",
+      "calendarDefault": "Persönlich"
+    },
+    "fixEventTimes": {
+      "description": "Falsche Ereigniszeiten korrigieren (von Mitternacht auf richtige Zeit korrigieren)",
+      "calendar": "Kalendername",
+      "calendarDefault": "Arbeit",
+      "datePattern": "Zieldatum-Muster, z.B.: 2025-07-10",
+      "eventKeyword": "Ereignis-Stichwort",
+      "newStartTime": "Neue Startzeit HH:MM",
+      "newEndTime": "Neue Endzeit HH:MM",
+      "corrections": "Liste der Zeitkorrekturen"
+    }
+  },
+  "errors": {
+    "invalidDateFormat": "Ungültiges Datumsformat: {{dateStr}}, bitte verwenden Sie das Format YYYY-MM-DD HH:MM",
+    "dateFormatError": "Datumsformatfehler: {{field}} \"{{value}}\" Format ist ungültig.",
+    "dateFormatExpected": "YYYY-MM-DD HH:MM (24-Stunden-Format)",
+    "dateFormatExample": "2025-01-15 14:30",
+    "missingRequiredParam": "Erforderlicher Parameter \"{{param}}\" fehlt.",
+    "missingTitle": "Erforderlicher Parameter \"title\" fehlt.",
+    "missingTitleSuggestion": "Bitte geben Sie einen Ereignistitel an. Beispiel: {\"title\": \"Team Meeting\", \"startDate\": \"2025-01-15 14:00\", \"endDate\": \"2025-01-15 15:00\"}",
+    "missingStartDate": "Erforderlicher Parameter \"startDate\" fehlt.",
+    "missingEndDate": "Erforderlicher Parameter \"endDate\" fehlt.",
+    "missingKeyword": "Erforderlicher Parameter \"keyword\" fehlt. Bitte geben Sie das zu löschende Ereignis-Stichwort an.",
+    "calendarNotFound": "Kalender \"{{calendar}}\" nicht gefunden. Bitte verwenden Sie das list-calendars-Tool, um verfügbare Kalendernamen anzuzeigen. Hinweis: Kalendernamen sind groß-/kleinschreibungsabhängig und müssen exakt übereinstimmen.",
+    "permissionError": "macOS erfordert Kalender-App-Berechtigungen. Bitte überprüfen Sie: Systemeinstellungen → Datenschutz & Sicherheit → Kalender → Stellen Sie sicher, dass Terminal (oder Ihre App) Zugriffsberechtigungen hat.",
+    "calendarAppNotFound": "Kalender-App nicht gefunden. Bitte stellen Sie sicher, dass die macOS-Kalender-App installiert und zugänglich ist.",
+    "failedToListCalendars": "Kalenderliste konnte nicht abgerufen werden: {{error}}",
+    "failedToCreateEvent": "Ereignis konnte nicht erstellt werden: {{error}}",
+    "failedToDeleteEvents": "Ereignisse konnten nicht gelöscht werden: {{error}}",
+    "failedToListTodayEvents": "Heutige Ereignisse konnten nicht abgerufen werden: {{error}}",
+    "failedToListWeekEvents": "Wochenereignisse konnten nicht abgerufen werden: {{error}}",
+    "failedToSearchEvents": "Ereignisse konnten nicht durchsucht werden: {{error}}",
+    "failedToFixEventTimes": "Ereigniszeiten konnten nicht korrigiert werden: {{error}}",
+    "weekStartFormatError": "Datumsformatfehler: weekStart \"{{value}}\" Format ist ungültig.",
+    "weekStartExpectedFormat": "YYYY-MM-DD",
+    "weekStartExample": "2025-01-15",
+    "missingNewStartTime": "Erforderlicher Parameter \"newStartTime\" fehlt. Erwartetes Format: HH:MM (24-Stunden-Format)",
+    "missingNewEndTime": "Erforderlicher Parameter \"newEndTime\" fehlt. Erwartetes Format: HH:MM (24-Stunden-Format)",
+    "permissionErrorShort": "Berechtigungsfehler. Bitte überprüfen Sie Systemeinstellungen → Datenschutz & Sicherheit → Kalender",
+    "calendarNotFoundShort": "Kalender \"{{calendar}}\" nicht gefunden. Bitte verwenden Sie list-calendars, um verfügbare Kalender anzuzeigen",
+    "unspecifiedKeyword": "(nicht angegeben)",
+    "missingEvents": "Erforderlicher Parameter \"events\" fehlt oder Format ist ungültig.",
+    "missingEventsSuggestion": "Bitte geben Sie ein Ereignis-Array an. Beispiel: {\"events\": [{\"title\": \"Event 1\", \"startDate\": \"2025-01-15 14:00\", \"endDate\": \"2025-01-15 15:00\"}]}",
+    "emptyEventsArray": "Ereignis-Array ist leer.",
+    "emptyEventsArraySuggestion": "Bitte geben Sie mindestens ein Ereignis an.",
+    "unnamedEvent": "(unbenannt)",
+    "missingDatePattern": "Erforderlicher Parameter \"datePattern\" fehlt.",
+    "missingCorrections": "Erforderlicher Parameter \"corrections\" fehlt oder Array ist leer.",
+    "missingCorrectionsSuggestion": "Bitte geben Sie ein Korrekturen-Array an. Beispiel: {\"datePattern\": \"2025-01-15\", \"corrections\": [{\"keyword\": \"Meeting\", \"newStartTime\": \"14:00\", \"newEndTime\": \"15:00\"}]}",
+    "missingWeekStart": "Erforderlicher Parameter \"weekStart\" fehlt. Bitte verwenden Sie das Format: YYYY-MM-DD. Beispiel: \"2025-01-15\"",
+    "missingQuery": "Erforderlicher Parameter \"query\" fehlt oder Abfragezeichenfolge ist leer.",
+    "missingQuerySuggestion": "Bitte geben Sie einen Suchbegriff an. Beispiel: {\"query\": \"meeting\"}",
+    "searchTimeout": "Suchzeitüberschreitung. Kalender \"{{calendar}}\" enthält möglicherweise zu viele Ereignisse. Bitte versuchen Sie, mit spezifischeren Suchbegriffen zu suchen.",
+    "noMatchingEvents": "Keine passenden Ereignisse gefunden",
+    "deleteConfirmationRequired": "Bitte bestätigen Sie die Löschung! Dies löscht alle Ereignisse im Kalender \"{{calendar}}\", die das Stichwort \"{{keyword}}\" enthalten.",
+    "deleteConfirmationSuggestion": "Um die Löschung auszuführen, setzen Sie confirm: true"
+  },
+  "messages": {
+    "listTools": "Tools auflisten"
+  }
+}
+

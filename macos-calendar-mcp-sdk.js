@@ -2,8 +2,10 @@
 /** @format */
 
 // Load environment variables from .env file (if present)
-import dotenv from "dotenv";
-dotenv.config();
+import dotenvx from "@dotenvx/dotenvx";
+dotenvx.config();
+
+import { initI18n, t } from "./i18n.js";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -17,6 +19,72 @@ import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import express from "express";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { readdir, stat, unlink } from "fs/promises";
+import { join } from "path";
+
+/**
+ * Clean up log files older than the configured retention period
+ * @param {string} logDirectory - Directory containing log files (default: './logs')
+ * @param {number} retentionDays - Number of days to retain logs (default: 30)
+ */
+async function cleanupLogFiles(logDirectory = "./logs", retentionDays = 30) {
+    try {
+        // Parse retention days from environment or use default
+        const retentionDaysEnv = process.env.LOG_RETENTION_DAYS;
+        const retentionDaysValue = retentionDaysEnv ? parseInt(retentionDaysEnv, 10) : retentionDays;
+
+        if (isNaN(retentionDaysValue) || retentionDaysValue < 0) {
+            console.error(`[log-cleanup] Invalid LOG_RETENTION_DAYS value: ${retentionDaysEnv}, using default: ${retentionDays}`);
+            return;
+        }
+
+        const retentionMs = retentionDaysValue * 24 * 60 * 60 * 1000;
+        const cutoffDate = Date.now() - retentionMs;
+
+        let deletedCount = 0;
+        let errorCount = 0;
+
+        try {
+            const files = await readdir(logDirectory);
+            const logFilePattern = /\.(log|txt)$/i;
+
+            for (const file of files) {
+                if (!logFilePattern.test(file)) continue;
+
+                try {
+                    const filePath = join(logDirectory, file);
+                    const stats = await stat(filePath);
+
+                    if (stats.mtimeMs < cutoffDate) {
+                        await unlink(filePath);
+                        deletedCount++;
+                        if (process.env.DEBUG) {
+                            console.error(`[log-cleanup] Deleted log file: ${file} (${Math.round((Date.now() - stats.mtimeMs) / (24 * 60 * 60 * 1000))} days old)`);
+                        }
+                    }
+                } catch (fileError) {
+                    errorCount++;
+                    console.error(`[log-cleanup] Error processing file ${file}:`, fileError.message);
+                }
+            }
+
+            if (deletedCount > 0 || errorCount > 0) {
+                console.error(`[log-cleanup] Cleanup complete: ${deletedCount} file(s) deleted, ${errorCount} error(s)`);
+            }
+        } catch (dirError) {
+            // Directory doesn't exist or can't be read - this is fine, just log and continue
+            if (process.env.DEBUG) {
+                console.error(`[log-cleanup] Log directory not found or not accessible: ${logDirectory}`);
+            }
+        }
+    } catch (error) {
+        // Don't let cleanup errors interrupt server startup
+        console.error(`[log-cleanup] Error during log cleanup:`, error.message);
+        if (process.env.DEBUG) {
+            console.error(`[log-cleanup] Debug error details:`, error);
+        }
+    }
+}
 
 /**
  * Get all network interfaces with their IP addresses formatted for display
@@ -98,17 +166,31 @@ export class MacOSCalendarServer {
             }
         );
 
+        // Initialize i18n with language from environment variable (default: en)
+        const language = process.env.LANGUAGE || "en";
+        try {
+            initI18n(language);
+        } catch (error) {
+            console.error(`[i18n] Failed to initialize i18n: ${error.message}`);
+            // Fallback to English if initialization fails
+            try {
+                initI18n("en");
+            } catch (fallbackError) {
+                console.error(`[i18n] Failed to initialize i18n with fallback: ${fallbackError.message}`);
+            }
+        }
+
         this.setupToolHandlers();
     }
 
     setupToolHandlers() {
-        // 列出工具
+        // List tools
         this.server.setRequestHandler(ListToolsRequestSchema, async () => {
             return {
                 tools: [
                     {
                         name: "list-calendars",
-                        description: "列出所有macOS日历",
+                        description: t("tools.listCalendars.description"),
                         inputSchema: {
                             type: "object",
                             properties: {},
@@ -117,36 +199,41 @@ export class MacOSCalendarServer {
                     },
                     {
                         name: "create-event",
-                        description: "在macOS日历中创建新事件",
+                        description: t("tools.createEvent.description"),
                         inputSchema: {
                             type: "object",
                             properties: {
                                 calendar: {
                                     type: "string",
-                                    description: "日历名称",
-                                    default: "个人"
+                                    description: t("tools.createEvent.calendar"),
+                                    default: t("tools.createEvent.calendarDefault")
                                 },
                                 title: {
                                     type: "string",
-                                    description: "事件标题"
+                                    description: t("tools.createEvent.title")
                                 },
                                 startDate: {
                                     type: "string",
-                                    description: "开始时间，格式：YYYY-MM-DD HH:MM"
+                                    description: t("tools.createEvent.startDate")
                                 },
                                 endDate: {
                                     type: "string",
-                                    description: "结束时间，格式：YYYY-MM-DD HH:MM"
+                                    description: t("tools.createEvent.endDate")
                                 },
                                 description: {
                                     type: "string",
-                                    description: "事件描述",
+                                    description: t("tools.createEvent.description"),
                                     default: ""
                                 },
                                 location: {
                                     type: "string",
-                                    description: "事件地点",
+                                    description: t("tools.createEvent.location"),
                                     default: ""
+                                },
+                                allDay: {
+                                    type: "boolean",
+                                    description: t("tools.createEvent.allDay"),
+                                    default: false
                                 }
                             },
                             required: ["title", "startDate", "endDate"],
@@ -155,29 +242,52 @@ export class MacOSCalendarServer {
                     },
                     {
                         name: "create-batch-events",
-                        description: "批量创建事件",
+                        description: t("tools.createBatchEvents.description"),
                         inputSchema: {
                             type: "object",
                             properties: {
                                 events: {
                                     type: "array",
+                                    description: t("tools.createBatchEvents.events"),
                                     items: {
                                         type: "object",
                                         properties: {
-                                            title: { type: "string" },
-                                            startDate: { type: "string" },
-                                            endDate: { type: "string" },
-                                            description: { type: "string", default: "" },
-                                            location: { type: "string", default: "" }
+                                            title: {
+                                                type: "string",
+                                                description: t("tools.createEvent.title")
+                                            },
+                                            startDate: {
+                                                type: "string",
+                                                description: t("tools.createEvent.startDate")
+                                            },
+                                            endDate: {
+                                                type: "string",
+                                                description: t("tools.createEvent.endDate")
+                                            },
+                                            description: {
+                                                type: "string",
+                                                description: t("tools.createEvent.description"),
+                                                default: ""
+                                            },
+                                            location: {
+                                                type: "string",
+                                                description: t("tools.createEvent.location"),
+                                                default: ""
+                                            },
+                                            allDay: {
+                                                type: "boolean",
+                                                description: t("tools.createEvent.allDay"),
+                                                default: false
+                                            }
                                         },
-                                        required: ["title", "startDate", "endDate"]
-                                    },
-                                    description: "事件列表"
+                                        required: ["title", "startDate", "endDate"],
+                                        additionalProperties: false
+                                    }
                                 },
                                 calendar: {
                                     type: "string",
-                                    description: "目标日历",
-                                    default: "工作"
+                                    description: t("tools.createBatchEvents.targetCalendar"),
+                                    default: t("tools.createBatchEvents.targetCalendarDefault")
                                 }
                             },
                             required: ["events"],
@@ -186,22 +296,22 @@ export class MacOSCalendarServer {
                     },
                     {
                         name: "delete-events-by-keyword",
-                        description: "根据关键词删除事件",
+                        description: t("tools.deleteEventsByKeyword.description"),
                         inputSchema: {
                             type: "object",
                             properties: {
                                 keyword: {
                                     type: "string",
-                                    description: "要删除的事件关键词"
+                                    description: t("tools.deleteEventsByKeyword.keyword")
                                 },
                                 calendar: {
                                     type: "string",
-                                    description: "日历名称",
-                                    default: "工作"
+                                    description: t("tools.deleteEventsByKeyword.calendar"),
+                                    default: t("tools.deleteEventsByKeyword.calendarDefault")
                                 },
                                 confirm: {
                                     type: "boolean",
-                                    description: "确认删除",
+                                    description: t("tools.deleteEventsByKeyword.confirm"),
                                     default: false
                                 }
                             },
@@ -211,14 +321,14 @@ export class MacOSCalendarServer {
                     },
                     {
                         name: "list-today-events",
-                        description: "列出今天的事件",
+                        description: t("tools.listTodayEvents.description"),
                         inputSchema: {
                             type: "object",
                             properties: {
                                 calendar: {
                                     type: "string",
-                                    description: "日历名称",
-                                    default: "个人"
+                                    description: t("tools.listTodayEvents.calendar"),
+                                    default: t("tools.listTodayEvents.calendarDefault")
                                 }
                             },
                             additionalProperties: false
@@ -226,18 +336,18 @@ export class MacOSCalendarServer {
                     },
                     {
                         name: "list-week-events",
-                        description: "列出指定周的事件",
+                        description: t("tools.listWeekEvents.description"),
                         inputSchema: {
                             type: "object",
                             properties: {
                                 weekStart: {
                                     type: "string",
-                                    description: "周开始日期，格式：YYYY-MM-DD"
+                                    description: t("tools.listWeekEvents.weekStart")
                                 },
                                 calendar: {
                                     type: "string",
-                                    description: "日历名称",
-                                    default: "工作"
+                                    description: t("tools.listWeekEvents.calendar"),
+                                    default: t("tools.listWeekEvents.calendarDefault")
                                 }
                             },
                             required: ["weekStart"],
@@ -246,18 +356,18 @@ export class MacOSCalendarServer {
                     },
                     {
                         name: "search-events",
-                        description: "搜索事件",
+                        description: t("tools.searchEvents.description"),
                         inputSchema: {
                             type: "object",
                             properties: {
                                 query: {
                                     type: "string",
-                                    description: "搜索关键词"
+                                    description: t("tools.searchEvents.query")
                                 },
                                 calendar: {
                                     type: "string",
-                                    description: "日历名称",
-                                    default: "个人"
+                                    description: t("tools.searchEvents.calendar"),
+                                    default: t("tools.searchEvents.calendarDefault")
                                 }
                             },
                             required: ["query"],
@@ -266,31 +376,31 @@ export class MacOSCalendarServer {
                     },
                     {
                         name: "fix-event-times",
-                        description: "修正错误的事件时间（从凌晨修正到正确时间）",
+                        description: t("tools.fixEventTimes.description"),
                         inputSchema: {
                             type: "object",
                             properties: {
                                 calendar: {
                                     type: "string",
-                                    description: "日历名称",
-                                    default: "工作"
+                                    description: t("tools.fixEventTimes.calendar"),
+                                    default: t("tools.fixEventTimes.calendarDefault")
                                 },
                                 datePattern: {
                                     type: "string",
-                                    description: "目标日期模式，如：2025-07-10"
+                                    description: t("tools.fixEventTimes.datePattern")
                                 },
                                 corrections: {
                                     type: "array",
                                     items: {
                                         type: "object",
                                         properties: {
-                                            keyword: { type: "string", description: "事件关键词" },
-                                            newStartTime: { type: "string", description: "新开始时间 HH:MM" },
-                                            newEndTime: { type: "string", description: "新结束时间 HH:MM" }
+                                            keyword: { type: "string", description: t("tools.fixEventTimes.eventKeyword") },
+                                            newStartTime: { type: "string", description: t("tools.fixEventTimes.newStartTime") },
+                                            newEndTime: { type: "string", description: t("tools.fixEventTimes.newEndTime") }
                                         },
                                         required: ["keyword", "newStartTime", "newEndTime"]
                                     },
-                                    description: "时间修正列表"
+                                    description: t("tools.fixEventTimes.corrections")
                                 }
                             },
                             required: ["calendar", "datePattern", "corrections"],
@@ -331,7 +441,7 @@ export class MacOSCalendarServer {
             };
         });
 
-        // 调用工具
+        // Call tools
         this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
                 const { name, arguments: args } = request.params;
@@ -382,15 +492,15 @@ export class MacOSCalendarServer {
         });
     }
 
-    // 修复时间格式转换 - 使用原生macOS时间设置避免时区问题
+    // Fix time format conversion - use native macOS time settings to avoid timezone issues
     formatDateForAppleScript(dateStr) {
-        // 输入格式：YYYY-MM-DD HH:MM
+        // Input format: YYYY-MM-DD HH:MM
         const [datePart, timePart] = dateStr.split(" ");
         const [year, month, day] = datePart.split("-").map(Number);
         const [hour, minute] = timePart.split(":").map(Number);
 
         if (!year || !month || !day || hour === undefined || minute === undefined) {
-            throw new Error(`无效的日期格式: ${dateStr}，请使用 YYYY-MM-DD HH:MM 格式`);
+            throw new Error(t("errors.invalidDateFormat", { dateStr }));
         }
 
         return {
@@ -402,7 +512,7 @@ export class MacOSCalendarServer {
         };
     }
 
-    // 生成AppleScript时间设置代码
+    // Generate AppleScript time setting code
     generateTimeScript(dateInfo, variableName = "eventDate") {
         return `
       set ${variableName} to current date
@@ -411,6 +521,24 @@ export class MacOSCalendarServer {
       set day of ${variableName} to ${dateInfo.day}
       set time of ${variableName} to (${dateInfo.hour} * hours + ${dateInfo.minute} * minutes)
     `;
+    }
+
+    // Adjust date to all-day event start time (00:00 of the day)
+    adjustDateForAllDayStart(dateStr) {
+        const [datePart] = dateStr.split(" ");
+        return `${datePart} 00:00`;
+    }
+
+    // Adjust date to all-day event end time (00:00 of the day after end date)
+    adjustDateForAllDayEnd(dateStr) {
+        const [datePart] = dateStr.split(" ");
+        const [year, month, day] = datePart.split("-").map(Number);
+        const date = new Date(year, month - 1, day);
+        date.setDate(date.getDate() + 1);
+        const nextYear = date.getFullYear();
+        const nextMonth = String(date.getMonth() + 1).padStart(2, "0");
+        const nextDay = String(date.getDate()).padStart(2, "0");
+        return `${nextYear}-${nextMonth}-${nextDay} 00:00`;
     }
 
     async listCalendars() {
@@ -428,14 +556,14 @@ export class MacOSCalendarServer {
                 ]
             };
         } catch (error) {
-            let errorMessage = `获取日历列表失败: ${error.message}`;
+            let errorMessage = t("errors.failedToListCalendars", { error: error.message });
             let errorDetails = { error: errorMessage };
 
             if (error.message.includes("not allowed") || error.message.includes("permission")) {
                 errorDetails.permissionError = true;
-                errorDetails.suggestion = "macOS 需要授予 Calendar 应用权限。请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。";
+                errorDetails.suggestion = t("errors.permissionError");
             } else if (error.message.includes("not found") || error.message.includes("Calendar.app")) {
-                errorDetails.suggestion = "Calendar 应用未找到。请确保 macOS Calendar 应用已安装且可访问。";
+                errorDetails.suggestion = t("errors.calendarAppNotFound");
             }
 
             throw new Error(JSON.stringify(errorDetails));
@@ -447,16 +575,16 @@ export class MacOSCalendarServer {
         if (!args.title) {
             throw new Error(
                 JSON.stringify({
-                    error: '缺少必需参数 "title"。',
-                    suggestion: '请提供事件标题。示例: {"title": "Team Meeting", "startDate": "2025-01-15 14:00", "endDate": "2025-01-15 15:00"}'
+                    error: t("errors.missingTitle"),
+                    suggestion: t("errors.missingTitleSuggestion")
                 })
             );
         }
         if (!args.startDate) {
             throw new Error(
                 JSON.stringify({
-                    error: '缺少必需参数 "startDate"。',
-                    expectedFormat: "YYYY-MM-DD HH:MM (24小时制)",
+                    error: t("errors.missingStartDate"),
+                    expectedFormat: t("errors.dateFormatExpected"),
                     example: "2025-01-15 14:00"
                 })
             );
@@ -464,37 +592,41 @@ export class MacOSCalendarServer {
         if (!args.endDate) {
             throw new Error(
                 JSON.stringify({
-                    error: '缺少必需参数 "endDate"。',
-                    expectedFormat: "YYYY-MM-DD HH:MM (24小时制)",
+                    error: t("errors.missingEndDate"),
+                    expectedFormat: t("errors.dateFormatExpected"),
                     example: "2025-01-15 15:00"
                 })
             );
         }
 
-        const { calendar = "个人", title, startDate, endDate, description = "", location = "" } = args;
+        const { calendar = t("tools.createEvent.calendarDefault"), title, startDate, endDate, description = "", location = "", allDay = false } = args;
+
+        // For all-day events, adjust dates: start to 00:00 on start date, end to 00:00 on day after end date
+        const adjustedStartDate = allDay ? this.adjustDateForAllDayStart(startDate) : startDate;
+        const adjustedEndDate = allDay ? this.adjustDateForAllDayEnd(endDate) : endDate;
 
         let startInfo, endInfo;
         try {
-            startInfo = this.formatDateForAppleScript(startDate);
+            startInfo = this.formatDateForAppleScript(adjustedStartDate);
         } catch (error) {
             throw new Error(
                 JSON.stringify({
-                    error: `日期格式错误：startDate "${startDate}" 格式无效。`,
-                    expectedFormat: "YYYY-MM-DD HH:MM (24小时制)",
-                    example: "2025-01-15 14:30",
+                    error: t("errors.dateFormatError", { field: "startDate", value: startDate }),
+                    expectedFormat: t("errors.dateFormatExpected"),
+                    example: t("errors.dateFormatExample"),
                     provided: startDate
                 })
             );
         }
 
         try {
-            endInfo = this.formatDateForAppleScript(endDate);
+            endInfo = this.formatDateForAppleScript(adjustedEndDate);
         } catch (error) {
             throw new Error(
                 JSON.stringify({
-                    error: `日期格式错误：endDate "${endDate}" 格式无效。`,
-                    expectedFormat: "YYYY-MM-DD HH:MM (24小时制)",
-                    example: "2025-01-15 15:30",
+                    error: t("errors.dateFormatError", { field: "endDate", value: endDate }),
+                    expectedFormat: t("errors.dateFormatExpected"),
+                    example: t("errors.dateFormatExample"),
                     provided: endDate
                 })
             );
@@ -503,6 +635,9 @@ export class MacOSCalendarServer {
         const startTimeScript = this.generateTimeScript(startInfo, "startTime");
         const endTimeScript = this.generateTimeScript(endInfo, "endTime");
 
+        // Add allday event property when allDay is true
+        const alldayProperty = allDay ? ", allday event:true" : "";
+
         const script = `
       tell application "Calendar"
         set theCalendar to calendar "${calendar}"
@@ -510,7 +645,7 @@ export class MacOSCalendarServer {
         ${startTimeScript}
         ${endTimeScript}
 
-        make new event at end of events of theCalendar with properties {summary:"${title}", start date:startTime, end date:endTime, description:"${description}", location:"${location}"}
+        make new event at end of events of theCalendar with properties {summary:"${title}", start date:startTime, end date:endTime, description:"${description}", location:"${location}"${alldayProperty}}
       end tell
     `;
 
@@ -528,22 +663,23 @@ export class MacOSCalendarServer {
                                 startDate,
                                 endDate,
                                 description,
-                                location
+                                location,
+                                allDay
                             }
                         })
                     }
                 ]
             };
         } catch (error) {
-            let errorMessage = `创建事件失败: ${error.message}`;
+            let errorMessage = t("errors.failedToCreateEvent", { error: error.message });
             let errorDetails = { error: errorMessage };
 
             if (error.message.includes(`doesn't understand the "calendar" message`) || error.message.includes(`Can't get calendar`) || error.message.includes(`can't get calendar`)) {
                 errorDetails.calendarNotFound = true;
-                errorDetails.suggestion = `日历 "${calendar}" 未找到。请使用 list-calendars 工具查看可用的日历名称。注意：日历名称区分大小写，必须完全匹配。`;
+                errorDetails.suggestion = t("errors.calendarNotFound", { calendar });
             } else if (error.message.includes("not allowed") || error.message.includes("permission")) {
                 errorDetails.permissionError = true;
-                errorDetails.suggestion = "macOS 需要授予 Calendar 应用权限。请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。";
+                errorDetails.suggestion = t("errors.permissionError");
             }
 
             throw new Error(JSON.stringify(errorDetails));
@@ -555,21 +691,21 @@ export class MacOSCalendarServer {
         if (!args.events || !Array.isArray(args.events)) {
             throw new Error(
                 JSON.stringify({
-                    error: '缺少必需参数 "events" 或格式不正确。',
-                    suggestion: '请提供一个事件数组。示例: {"events": [{"title": "Event 1", "startDate": "2025-01-15 14:00", "endDate": "2025-01-15 15:00"}]}'
+                    error: t("errors.missingEvents"),
+                    suggestion: t("errors.missingEventsSuggestion")
                 })
             );
         }
         if (args.events.length === 0) {
             throw new Error(
                 JSON.stringify({
-                    error: "事件数组为空。",
-                    suggestion: "请提供至少一个事件。"
+                    error: t("errors.emptyEventsArray"),
+                    suggestion: t("errors.emptyEventsArraySuggestion")
                 })
             );
         }
 
-        const { events, calendar = "工作" } = args;
+        const { events, calendar = t("tools.createBatchEvents.targetCalendarDefault") } = args;
         const results = [];
         let successCount = 0;
         let failCount = 0;
@@ -580,8 +716,8 @@ export class MacOSCalendarServer {
                 if (!event.title) {
                     results.push({
                         success: false,
-                        title: event.title || "(未命名)",
-                        error: '缺少必需参数 "title"'
+                        title: event.title || t("errors.unnamedEvent"),
+                        error: t("errors.missingTitle")
                     });
                     failCount++;
                     continue;
@@ -590,7 +726,7 @@ export class MacOSCalendarServer {
                     results.push({
                         success: false,
                         title: event.title,
-                        error: '缺少必需参数 "startDate"。预期格式: YYYY-MM-DD HH:MM'
+                        error: t("errors.missingStartDate") + " " + t("errors.dateFormatExpected")
                     });
                     failCount++;
                     continue;
@@ -599,32 +735,38 @@ export class MacOSCalendarServer {
                     results.push({
                         success: false,
                         title: event.title,
-                        error: '缺少必需参数 "endDate"。预期格式: YYYY-MM-DD HH:MM'
+                        error: t("errors.missingEndDate") + " " + t("errors.dateFormatExpected")
                     });
                     failCount++;
                     continue;
                 }
+
+                const eventAllDay = event.allDay || false;
+
+                // For all-day events, adjust dates: start to 00:00 on start date, end to 00:00 on day after end date
+                const adjustedStartDate = eventAllDay ? this.adjustDateForAllDayStart(event.startDate) : event.startDate;
+                const adjustedEndDate = eventAllDay ? this.adjustDateForAllDayEnd(event.endDate) : event.endDate;
 
                 let startInfo, endInfo;
                 try {
-                    startInfo = this.formatDateForAppleScript(event.startDate);
+                    startInfo = this.formatDateForAppleScript(adjustedStartDate);
                 } catch (error) {
                     results.push({
                         success: false,
                         title: event.title,
-                        error: `日期格式错误: startDate "${event.startDate}" 格式无效。预期格式: YYYY-MM-DD HH:MM`
+                        error: t("errors.dateFormatError", { field: "startDate", value: event.startDate }) + " " + t("errors.dateFormatExpected")
                     });
                     failCount++;
                     continue;
                 }
 
                 try {
-                    endInfo = this.formatDateForAppleScript(event.endDate);
+                    endInfo = this.formatDateForAppleScript(adjustedEndDate);
                 } catch (error) {
                     results.push({
                         success: false,
                         title: event.title,
-                        error: `日期格式错误: endDate "${event.endDate}" 格式无效。预期格式: YYYY-MM-DD HH:MM`
+                        error: t("errors.dateFormatError", { field: "endDate", value: event.endDate }) + " " + t("errors.dateFormatExpected")
                     });
                     failCount++;
                     continue;
@@ -633,6 +775,9 @@ export class MacOSCalendarServer {
                 const startTimeScript = this.generateTimeScript(startInfo, "startTime");
                 const endTimeScript = this.generateTimeScript(endInfo, "endTime");
 
+                // Add allday event property when allDay is true
+                const alldayProperty = eventAllDay ? ", allday event:true" : "";
+
                 const script = `
           tell application "Calendar"
             set theCalendar to calendar "${calendar}"
@@ -640,7 +785,7 @@ export class MacOSCalendarServer {
             ${startTimeScript}
             ${endTimeScript}
 
-            make new event at end of events of theCalendar with properties {summary:"${event.title}", start date:startTime, end date:endTime, description:"${event.description || ""}", location:"${event.location || ""}"}
+            make new event at end of events of theCalendar with properties {summary:"${event.title}", start date:startTime, end date:endTime, description:"${event.description || ""}", location:"${event.location || ""}"${alldayProperty}}
           end tell
         `;
 
@@ -648,19 +793,21 @@ export class MacOSCalendarServer {
                 results.push({
                     success: true,
                     title: event.title,
-                    startDate: event.startDate
+                    startDate: event.startDate,
+                    endDate: event.endDate,
+                    allDay: eventAllDay
                 });
                 successCount++;
             } catch (error) {
                 let errorMsg = error.message;
                 if (error.message.includes(`doesn't understand the "calendar" message`)) {
-                    errorMsg = `日历 "${calendar}" 未找到。请使用 list-calendars 查看可用日历`;
+                    errorMsg = t("errors.calendarNotFoundShort", { calendar });
                 } else if (error.message.includes("not allowed") || error.message.includes("permission")) {
-                    errorMsg = `权限错误。请检查系统设置 → 隐私与安全性 → 日历`;
+                    errorMsg = t("errors.permissionErrorShort");
                 }
                 results.push({
                     success: false,
-                    title: event.title || "(未命名)",
+                    title: event.title || t("errors.unnamedEvent"),
                     error: errorMsg
                 });
                 failCount++;
@@ -683,7 +830,7 @@ export class MacOSCalendarServer {
     }
 
     async deleteEventsByKeyword(args) {
-        const { keyword, calendar = "工作", confirm = false } = args;
+        const { keyword, calendar = t("tools.deleteEventsByKeyword.calendarDefault"), confirm = false } = args;
 
         if (!confirm) {
             return {
@@ -692,8 +839,8 @@ export class MacOSCalendarServer {
                         type: "text",
                         text: JSON.stringify({
                             requiresConfirmation: true,
-                            message: `请确认删除操作！将删除日历"${calendar}"中包含关键词"${keyword}"的所有事件。`,
-                            suggestion: "要执行删除，请设置 confirm: true",
+                            message: t("errors.deleteConfirmationRequired", { calendar, keyword }),
+                            suggestion: t("errors.deleteConfirmationSuggestion"),
                             keyword,
                             calendar
                         })
@@ -736,17 +883,17 @@ export class MacOSCalendarServer {
                 ]
             };
         } catch (error) {
-            let errorMessage = `删除事件失败: ${error.message}`;
+            let errorMessage = t("errors.failedToDeleteEvents", { error: error.message });
             let errorDetails = { error: errorMessage };
 
             if (!args.keyword) {
-                errorDetails = { error: '缺少必需参数 "keyword"。请提供要删除的事件关键词。' };
+                errorDetails = { error: t("errors.missingKeyword") };
             } else if (error.message.includes(`doesn't understand the "calendar" message`)) {
                 errorDetails.calendarNotFound = true;
-                errorDetails.suggestion = `日历 "${calendar}" 未找到。请使用 list-calendars 工具查看可用的日历名称。注意：日历名称区分大小写，必须完全匹配。`;
+                errorDetails.suggestion = t("errors.calendarNotFound", { calendar });
             } else if (error.message.includes("not allowed") || error.message.includes("permission")) {
                 errorDetails.permissionError = true;
-                errorDetails.suggestion = "macOS 需要授予 Calendar 应用权限。请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。";
+                errorDetails.suggestion = t("errors.permissionError");
             }
 
             throw new Error(JSON.stringify(errorDetails));
@@ -754,7 +901,7 @@ export class MacOSCalendarServer {
     }
 
     async listTodayEvents(args) {
-        const { calendar = "个人" } = args;
+        const { calendar = t("tools.listTodayEvents.calendarDefault") } = args;
 
         const script = `
       tell application "Calendar"
@@ -815,15 +962,15 @@ export class MacOSCalendarServer {
                 ]
             };
         } catch (error) {
-            let errorMessage = `获取今日事件失败: ${error.message}`;
+            let errorMessage = t("errors.failedToListTodayEvents", { error: error.message });
             let errorDetails = { error: errorMessage };
 
             if (error.message.includes(`doesn't understand the "calendar" message`) || error.message.includes(`Can't get calendar`) || error.message.includes(`can't get calendar`)) {
                 errorDetails.calendarNotFound = true;
-                errorDetails.suggestion = `日历 "${calendar}" 未找到。请使用 list-calendars 工具查看可用的日历名称。注意：日历名称区分大小写，必须完全匹配。`;
+                errorDetails.suggestion = t("errors.calendarNotFound", { calendar });
             } else if (error.message.includes("not allowed") || error.message.includes("permission")) {
                 errorDetails.permissionError = true;
-                errorDetails.suggestion = "macOS 需要授予 Calendar 应用权限。请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。";
+                errorDetails.suggestion = t("errors.permissionError");
             }
 
             throw new Error(JSON.stringify(errorDetails));
@@ -831,7 +978,7 @@ export class MacOSCalendarServer {
     }
 
     async listWeekEvents(args) {
-        const { weekStart, calendar = "工作" } = args;
+        const { weekStart, calendar = t("tools.listWeekEvents.calendarDefault") } = args;
 
         const startDate = new Date(weekStart);
         const endDate = new Date(startDate);
@@ -900,19 +1047,19 @@ export class MacOSCalendarServer {
                 ]
             };
         } catch (error) {
-            let errorMessage = `获取周事件失败: ${error.message}`;
+            let errorMessage = t("errors.failedToListWeekEvents", { error: error.message });
             let errorDetails = { error: errorMessage };
 
             if (!args.weekStart) {
-                errorDetails = { error: '缺少必需参数 "weekStart"。请使用格式: YYYY-MM-DD。示例: "2025-01-15"' };
+                errorDetails = { error: t("errors.missingWeekStart") };
             } else {
                 try {
                     this.formatDateForAppleScript(args.weekStart + " 00:00");
                 } catch (dateError) {
                     errorDetails = {
-                        error: `日期格式错误：weekStart "${args.weekStart}" 格式无效。`,
-                        expectedFormat: "YYYY-MM-DD",
-                        example: "2025-01-15",
+                        error: t("errors.weekStartFormatError", { value: args.weekStart }),
+                        expectedFormat: t("errors.weekStartExpectedFormat"),
+                        example: t("errors.weekStartExample"),
                         provided: args.weekStart
                     };
                 }
@@ -921,11 +1068,11 @@ export class MacOSCalendarServer {
             if (error.message.includes(`doesn't understand the "calendar" message`)) {
                 errorDetails.calendarNotFound = true;
                 if (!errorDetails.suggestion) errorDetails.suggestion = "";
-                errorDetails.suggestion += `日历 "${calendar}" 未找到。请使用 list-calendars 工具查看可用的日历名称。`;
+                errorDetails.suggestion += t("errors.calendarNotFound", { calendar });
             } else if (error.message.includes("not allowed") || error.message.includes("permission")) {
                 errorDetails.permissionError = true;
                 if (!errorDetails.suggestion) errorDetails.suggestion = "";
-                errorDetails.suggestion += "macOS 需要授予 Calendar 应用权限。请检查：系统设置 → 隐私与安全性 → 日历";
+                errorDetails.suggestion += t("errors.permissionError");
             }
 
             throw new Error(JSON.stringify(errorDetails));
@@ -933,7 +1080,7 @@ export class MacOSCalendarServer {
     }
 
     async searchEvents(args) {
-        const { query, calendar = "个人" } = args;
+        const { query, calendar = t("tools.searchEvents.calendarDefault") } = args;
 
         console.error(`[search-events] Starting search for query: "${query}" in calendar: "${calendar}"`);
 
@@ -952,6 +1099,8 @@ export class MacOSCalendarServer {
         set allEvents to items 1 thru 200 of allEvents
     end if
     set matchingEvents to {}
+    set errorCount to 0
+    set errorDetails to {}
     repeat with anEvent in allEvents
         try
             set eventSummary to summary of anEvent
@@ -961,9 +1110,19 @@ export class MacOSCalendarServer {
                 set eventInfo to eventSummary & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & eventDesc & "|" & eventLoc
                 set end of matchingEvents to eventInfo
             end if
-        on error
+        on error errorMessage number errorNumber
+            set errorCount to errorCount + 1
+            set errorInfo to "Error " & errorNumber & ": " & errorMessage
+            set end of errorDetails to errorInfo
+            -- Log error to stderr (will be captured by Node.js)
+            try
+                do shell script "echo '[AppleScript Error] " & errorInfo & "' >&2"
+            end try
         end try
     end repeat
+    if errorCount > 0 then
+        return "ERROR_COUNT:" & errorCount & "|ERRORS:" & (errorDetails as string) & "|" & (matchingEvents as string)
+    end if
     return matchingEvents as string
 end tell`;
 
@@ -988,7 +1147,19 @@ end tell`;
                         console.error(`[search-events] Calendar "${calendar}" completed in ${duration}ms`);
 
                         if (error) {
+                            // Log the actual error details from osascript
                             console.error(`[search-events] Error in calendar "${calendar}":`, error.message);
+                            if (stderr) {
+                                console.error(`[search-events] AppleScript stderr:`, stderr);
+                            }
+                            if (stdout) {
+                                console.error(`[search-events] AppleScript stdout:`, stdout);
+                            }
+                            if (process.env.DEBUG) {
+                                console.error(`[search-events] Full error object:`, error);
+                                console.error(`[search-events] Error code:`, error.code);
+                                console.error(`[search-events] Error signal:`, error.signal);
+                            }
                             reject(error);
                         } else {
                             resolve({ stdout, stderr });
@@ -1024,7 +1195,40 @@ end tell`;
                 throw timeoutError;
             }
 
-            const events = (result.stdout || "").trim();
+            let events = (result.stdout || "").trim();
+
+            // Log stderr if present (contains AppleScript error details)
+            if (result.stderr && result.stderr.trim()) {
+                console.error(`[search-events] AppleScript stderr for calendar "${calendar}":`, result.stderr.trim());
+            }
+
+            // Check for error count from AppleScript
+            let errorCount = 0;
+            let errorDetails = [];
+            if (events.startsWith("ERROR_COUNT:")) {
+                const parts = events.split("|");
+                errorCount = parseInt(parts[0].replace("ERROR_COUNT:", ""), 10) || 0;
+
+                // Extract error details if present
+                if (parts[1] && parts[1].startsWith("ERRORS:")) {
+                    const errorDetailsStr = parts[1].replace("ERRORS:", "");
+                    errorDetails = errorDetailsStr ? errorDetailsStr.split(", ") : [];
+                    events = parts.slice(2).join("|") || "";
+                } else {
+                    events = parts[1] || "";
+                }
+
+                if (errorCount > 0) {
+                    console.error(`[search-events] Encountered ${errorCount} error(s) while processing events in calendar "${calendar}"`);
+                    if (errorDetails.length > 0) {
+                        console.error(`[search-events] Error details:`, errorDetails);
+                    }
+                    if (process.env.DEBUG) {
+                        console.error(`[search-events] Debug: ${errorCount} event(s) failed to process in calendar "${calendar}"`);
+                        console.error(`[search-events] Debug: Events that succeeded: ${events ? events.split(",").length : 0}`);
+                    }
+                }
+            }
 
             if (!events || events === '""') {
                 return {
@@ -1052,7 +1256,7 @@ end tell`;
                 };
             });
 
-            console.error(`[search-events] Found ${eventList.length} events in calendar "${calendar}"`);
+            console.error(`[search-events] Found ${eventList.length} events in calendar "${calendar}"${errorCount > 0 ? ` (${errorCount} error(s) encountered)` : ""}`);
 
             return {
                 content: [
@@ -1067,24 +1271,30 @@ end tell`;
                 ]
             };
         } catch (error) {
+            // Log full error details to console for debugging
             console.error(`[search-events] Fatal error:`, error.message);
-            let errorMessage = `搜索事件失败: ${error.message}`;
+            if (process.env.DEBUG) {
+                console.error(`[search-events] Debug error stack:`, error.stack);
+            }
+
+            // Create user-friendly error message without internal details
+            let errorMessage = t("errors.failedToSearchEvents", { error: error.message });
             let errorDetails = { error: errorMessage };
 
             if (!args.query || args.query.trim() === "") {
                 errorDetails = {
-                    error: '缺少必需参数 "query" 或查询字符串为空。',
-                    suggestion: '请提供搜索关键词。示例: {"query": "meeting"}'
+                    error: t("errors.missingQuery"),
+                    suggestion: t("errors.missingQuerySuggestion")
                 };
             } else if (error.message.includes(`doesn't understand the "calendar" message`)) {
                 errorDetails.calendarNotFound = true;
-                errorDetails.suggestion = `日历 "${calendar}" 未找到。请使用 list-calendars 工具查看可用的日历名称。注意：日历名称区分大小写，必须完全匹配。`;
+                errorDetails.suggestion = t("errors.calendarNotFound", { calendar });
             } else if (error.message.includes("not allowed") || error.message.includes("permission")) {
                 errorDetails.permissionError = true;
-                errorDetails.suggestion = "macOS 需要授予 Calendar 应用权限。请检查：系统设置 → 隐私与安全性 → 日历 → 确保终端（或你的应用）已获得访问权限。";
+                errorDetails.suggestion = t("errors.permissionError");
             } else if (error.message.includes("timeout")) {
                 errorDetails.timeout = true;
-                errorDetails.suggestion = `搜索超时。日历 "${calendar}" 可能包含太多事件。请尝试搜索更具体的关键词。`;
+                errorDetails.suggestion = t("errors.searchTimeout", { calendar });
             }
 
             throw new Error(JSON.stringify(errorDetails));
@@ -1096,29 +1306,29 @@ end tell`;
         if (!args.datePattern) {
             throw new Error(
                 JSON.stringify({
-                    error: '缺少必需参数 "datePattern"。',
-                    expectedFormat: "YYYY-MM-DD",
-                    example: "2025-01-15"
+                    error: t("errors.missingDatePattern"),
+                    expectedFormat: t("errors.weekStartExpectedFormat"),
+                    example: t("errors.weekStartExample")
                 })
             );
         }
         if (!args.corrections || !Array.isArray(args.corrections) || args.corrections.length === 0) {
             throw new Error(
                 JSON.stringify({
-                    error: '缺少必需参数 "corrections" 或数组为空。',
-                    suggestion: '请提供一个修正数组。示例: {"datePattern": "2025-01-15", "corrections": [{"keyword": "Meeting", "newStartTime": "14:00", "newEndTime": "15:00"}]}'
+                    error: t("errors.missingCorrections"),
+                    suggestion: t("errors.missingCorrectionsSuggestion")
                 })
             );
         }
 
-        const { calendar = "工作", datePattern, corrections } = args;
+        const { calendar = t("tools.fixEventTimes.calendarDefault"), datePattern, corrections } = args;
         const results = [];
         let successCount = 0;
         let failCount = 0;
 
         for (const correction of corrections) {
             try {
-                // 构建正确的日期时间
+                // Build correct date time
                 const newStartDateTime = `${datePattern} ${correction.newStartTime}`;
                 const newEndDateTime = `${datePattern} ${correction.newEndTime}`;
 
@@ -1164,24 +1374,24 @@ end tell`;
                     results.push({
                         keyword: correction.keyword,
                         fixedCount: 0,
-                        error: "未找到匹配的事件"
+                        error: t("errors.noMatchingEvents")
                     });
                 }
             } catch (error) {
                 let errorMsg = error.message;
                 if (!correction.keyword) {
-                    errorMsg = '缺少必需参数 "keyword"';
+                    errorMsg = t("errors.missingRequiredParam", { param: "keyword" });
                 } else if (!correction.newStartTime) {
-                    errorMsg = '缺少必需参数 "newStartTime"。预期格式: HH:MM (24小时制)';
+                    errorMsg = t("errors.missingNewStartTime");
                 } else if (!correction.newEndTime) {
-                    errorMsg = '缺少必需参数 "newEndTime"。预期格式: HH:MM (24小时制)';
+                    errorMsg = t("errors.missingNewEndTime");
                 } else if (error.message.includes(`doesn't understand the "calendar" message`)) {
-                    errorMsg = `日历 "${calendar}" 未找到。请使用 list-calendars 查看可用日历`;
+                    errorMsg = t("errors.calendarNotFoundShort", { calendar });
                 } else if (error.message.includes("not allowed") || error.message.includes("permission")) {
-                    errorMsg = "权限错误。请检查系统设置 → 隐私与安全性 → 日历";
+                    errorMsg = t("errors.permissionErrorShort");
                 }
                 results.push({
-                    keyword: correction.keyword || "(未指定)",
+                    keyword: correction.keyword || t("errors.unspecifiedKeyword"),
                     fixedCount: 0,
                     error: errorMsg
                 });
@@ -1300,6 +1510,8 @@ end tell`;
     end if
     set matchingEvents to {}
     set maxResults to 50
+    set errorCount to 0
+    set errorDetails to {}
     repeat with anEvent in allEvents
         try
             if (count of matchingEvents) ≥ maxResults then exit repeat
@@ -1310,9 +1522,19 @@ end tell`;
                 set eventInfo to eventSummary & "|" & (start date of anEvent) & "|" & (end date of anEvent) & "|" & eventDesc & "|" & eventLoc
                 set end of matchingEvents to eventInfo
             end if
-        on error
+        on error errorMessage number errorNumber
+            set errorCount to errorCount + 1
+            set errorInfo to "Error " & errorNumber & ": " & errorMessage
+            set end of errorDetails to errorInfo
+            -- Log error to stderr (will be captured by Node.js)
+            try
+                do shell script "echo '[AppleScript Error] " & errorInfo & "' >&2"
+            end try
         end try
     end repeat
+    if errorCount > 0 then
+        return "ERROR_COUNT:" & errorCount & "|ERRORS:" & (errorDetails as string) & "|" & (matchingEvents as string)
+    end if
     return matchingEvents as string
 end tell`;
 
@@ -1337,7 +1559,19 @@ end tell`;
                                 console.error(`[search] Calendar "${calendar}" completed in ${duration}ms`);
 
                                 if (error) {
+                                    // Log the actual error details from osascript
                                     console.error(`[search] Error in calendar "${calendar}":`, error.message);
+                                    if (stderr) {
+                                        console.error(`[search] AppleScript stderr:`, stderr);
+                                    }
+                                    if (stdout) {
+                                        console.error(`[search] AppleScript stdout:`, stdout);
+                                    }
+                                    if (process.env.DEBUG) {
+                                        console.error(`[search] Full error object:`, error);
+                                        console.error(`[search] Error code:`, error.code);
+                                        console.error(`[search] Error signal:`, error.signal);
+                                    }
                                     reject(error);
                                 } else {
                                     resolve({ stdout, stderr });
@@ -1370,11 +1604,50 @@ end tell`;
                         const result = await Promise.race([execPromise, timeoutPromise]);
                         clearTimeout(timeoutId);
                         events = (result.stdout || "").trim();
-                        console.error(`[search] Found events in calendar "${calendar}": ${events ? events.split(",").length : 0}`);
+
+                        // Log stderr if present (contains AppleScript error details)
+                        if (result.stderr && result.stderr.trim()) {
+                            console.error(`[search] AppleScript stderr for calendar "${calendar}":`, result.stderr.trim());
+                        }
+
+                        // Check for error count from AppleScript
+                        let errorCount = 0;
+                        let errorDetails = [];
+                        if (events.startsWith("ERROR_COUNT:")) {
+                            const parts = events.split("|");
+                            errorCount = parseInt(parts[0].replace("ERROR_COUNT:", ""), 10) || 0;
+
+                            // Extract error details if present
+                            if (parts[1] && parts[1].startsWith("ERRORS:")) {
+                                const errorDetailsStr = parts[1].replace("ERRORS:", "");
+                                errorDetails = errorDetailsStr ? errorDetailsStr.split(", ") : [];
+                                events = parts.slice(2).join("|") || "";
+                            } else {
+                                events = parts[1] || "";
+                            }
+
+                            if (errorCount > 0) {
+                                console.error(`[search] Encountered ${errorCount} error(s) while processing events in calendar "${calendar}"`);
+                                if (errorDetails.length > 0) {
+                                    console.error(`[search] Error details:`, errorDetails);
+                                }
+                                if (process.env.DEBUG) {
+                                    console.error(`[search] Debug: ${errorCount} event(s) failed to process in calendar "${calendar}"`);
+                                    console.error(`[search] Debug: Events that succeeded: ${events ? events.split(",").length : 0}`);
+                                }
+                            }
+                        }
+
+                        const eventCount = events ? events.split(",").length : 0;
+                        console.error(`[search] Found ${eventCount} events in calendar "${calendar}"${errorCount > 0 ? ` (${errorCount} error(s) encountered)` : ""}`);
                     } catch (timeoutError) {
                         clearTimeout(timeoutId);
                         // If timeout or other error, skip this calendar and continue
+                        // Log error to console but don't forward details to MCP users
                         console.error(`[search] Skipping calendar "${calendar}":`, timeoutError.message);
+                        if (process.env.DEBUG) {
+                            console.error(`[search] Debug error details:`, timeoutError);
+                        }
                         continue;
                     }
 
@@ -1448,15 +1721,19 @@ end tell`;
                 ]
             };
         } catch (error) {
-            // Log error for debugging
+            // Log full error details to console for debugging
             console.error("[search] Fatal error:", error.message);
-            console.error("[search] Error stack:", error.stack);
+            if (process.env.DEBUG) {
+                console.error("[search] Debug error stack:", error.stack);
+            }
+
             // Return empty results on error (per OpenAI spec)
+            // Don't expose internal error details to MCP users
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify({ results: [], error: error.message })
+                        text: JSON.stringify({ results: [] })
                     }
                 ],
                 isError: true
@@ -1572,11 +1849,18 @@ end tell`;
                 ]
             };
         } catch (error) {
+            // Log full error details to console for debugging
+            console.error("[fetch] Error fetching event:", error.message);
+            if (process.env.DEBUG) {
+                console.error("[fetch] Debug error stack:", error.stack);
+            }
+
+            // Return user-friendly error without internal details
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify({ error: `Failed to fetch event: ${error.message}` })
+                        text: JSON.stringify({ error: "Failed to fetch event" })
                     }
                 ],
                 isError: true
@@ -1752,6 +2036,12 @@ process.on("unhandledRejection", (reason, promise) => {
 process.on("uncaughtException", (error) => {
     console.error("Uncaught Exception:", error);
     // Don't exit - keep the server running
+});
+
+// Run log cleanup on startup (non-blocking)
+cleanupLogFiles().catch((error) => {
+    // Don't let cleanup errors prevent server startup
+    console.error("[startup] Log cleanup failed:", error.message);
 });
 
 const server = new MacOSCalendarServer();

@@ -1,0 +1,106 @@
+{
+    "tools": {
+        "listCalendars": {
+            "description": "List all macOS calendars"
+        },
+        "createEvent": {
+            "description": "Create a new event in macOS calendar",
+            "calendar": "Calendar name",
+            "calendarDefault": "Personal",
+            "title": "Event title",
+            "startDate": "Start time, format: YYYY-MM-DD HH:MM",
+            "endDate": "End time, format: YYYY-MM-DD HH:MM",
+            "description": "Event description",
+            "location": "Event location",
+            "allDay": "Whether this is an all-day event. If true, the event will be created as an all-day event, start time will be adjusted to 00:00 of the day, and end time will be adjusted to 00:00 of the day after the end date"
+        },
+        "createBatchEvents": {
+            "description": "Create multiple events in batch",
+            "events": "List of events",
+            "targetCalendar": "Target calendar",
+            "targetCalendarDefault": "Work"
+        },
+        "deleteEventsByKeyword": {
+            "description": "Delete events by keyword",
+            "keyword": "Event keyword to delete",
+            "calendar": "Calendar name",
+            "calendarDefault": "Work",
+            "confirm": "Confirm deletion"
+        },
+        "listTodayEvents": {
+            "description": "List today's events",
+            "calendar": "Calendar name",
+            "calendarDefault": "Personal"
+        },
+        "listWeekEvents": {
+            "description": "List events for a specified week",
+            "weekStart": "Week start date, format: YYYY-MM-DD",
+            "calendar": "Calendar name",
+            "calendarDefault": "Work"
+        },
+        "searchEvents": {
+            "description": "Search events",
+            "query": "Search keyword",
+            "calendar": "Calendar name",
+            "calendarDefault": "Personal"
+        },
+        "fixEventTimes": {
+            "description": "Fix incorrect event times (correct from midnight to proper time)",
+            "calendar": "Calendar name",
+            "calendarDefault": "Work",
+            "datePattern": "Target date pattern, e.g.: 2025-07-10",
+            "eventKeyword": "Event keyword",
+            "newStartTime": "New start time HH:MM",
+            "newEndTime": "New end time HH:MM",
+            "corrections": "List of time corrections"
+        }
+    },
+    "errors": {
+        "invalidDateFormat": "Invalid date format: {{dateStr}}, please use YYYY-MM-DD HH:MM format",
+        "dateFormatError": "Date format error: {{field}} \"{{value}}\" format is invalid.",
+        "dateFormatExpected": "YYYY-MM-DD HH:MM (24-hour format)",
+        "dateFormatExample": "2025-01-15 14:30",
+        "missingRequiredParam": "Missing required parameter \"{{param}}\".",
+        "missingTitle": "Missing required parameter \"title\".",
+        "missingTitleSuggestion": "Please provide an event title. Example: {\"title\": \"Team Meeting\", \"startDate\": \"2025-01-15 14:00\", \"endDate\": \"2025-01-15 15:00\"}",
+        "missingStartDate": "Missing required parameter \"startDate\".",
+        "missingEndDate": "Missing required parameter \"endDate\".",
+        "missingKeyword": "Missing required parameter \"keyword\". Please provide the event keyword to delete.",
+        "calendarNotFound": "Calendar \"{{calendar}}\" not found. Please use the list-calendars tool to view available calendar names. Note: Calendar names are case-sensitive and must match exactly.",
+        "permissionError": "macOS requires Calendar app permissions. Please check: System Settings → Privacy & Security → Calendar → Ensure Terminal (or your app) has access permissions.",
+        "calendarAppNotFound": "Calendar app not found. Please ensure macOS Calendar app is installed and accessible.",
+        "failedToListCalendars": "Failed to list calendars: {{error}}",
+        "failedToCreateEvent": "Failed to create event: {{error}}",
+        "failedToDeleteEvents": "Failed to delete events: {{error}}",
+        "failedToListTodayEvents": "Failed to list today's events: {{error}}",
+        "failedToListWeekEvents": "Failed to list week events: {{error}}",
+        "failedToSearchEvents": "Failed to search events: {{error}}",
+        "failedToFixEventTimes": "Failed to fix event times: {{error}}",
+        "weekStartFormatError": "Date format error: weekStart \"{{value}}\" format is invalid.",
+        "weekStartExpectedFormat": "YYYY-MM-DD",
+        "weekStartExample": "2025-01-15",
+        "missingNewStartTime": "Missing required parameter \"newStartTime\". Expected format: HH:MM (24-hour format)",
+        "missingNewEndTime": "Missing required parameter \"newEndTime\". Expected format: HH:MM (24-hour format)",
+        "permissionErrorShort": "Permission error. Please check System Settings → Privacy & Security → Calendar",
+        "calendarNotFoundShort": "Calendar \"{{calendar}}\" not found. Please use list-calendars to view available calendars",
+        "unspecifiedKeyword": "(unspecified)",
+        "missingEvents": "Missing required parameter \"events\" or invalid format.",
+        "missingEventsSuggestion": "Please provide an array of events. Example: {\"events\": [{\"title\": \"Event 1\", \"startDate\": \"2025-01-15 14:00\", \"endDate\": \"2025-01-15 15:00\"}]}",
+        "emptyEventsArray": "Events array is empty.",
+        "emptyEventsArraySuggestion": "Please provide at least one event.",
+        "unnamedEvent": "(unnamed)",
+        "missingDatePattern": "Missing required parameter \"datePattern\".",
+        "missingCorrections": "Missing required parameter \"corrections\" or array is empty.",
+        "missingCorrectionsSuggestion": "Please provide a corrections array. Example: {\"datePattern\": \"2025-01-15\", \"corrections\": [{\"keyword\": \"Meeting\", \"newStartTime\": \"14:00\", \"newEndTime\": \"15:00\"}]}",
+        "missingWeekStart": "Missing required parameter \"weekStart\". Please use format: YYYY-MM-DD. Example: \"2025-01-15\"",
+        "missingQuery": "Missing required parameter \"query\" or query string is empty.",
+        "missingQuerySuggestion": "Please provide a search keyword. Example: {\"query\": \"meeting\"}",
+        "searchTimeout": "Search timeout. Calendar \"{{calendar}}\" may contain too many events. Please try searching with more specific keywords.",
+        "noMatchingEvents": "No matching events found",
+        "deleteConfirmationRequired": "Please confirm deletion! This will delete all events in calendar \"{{calendar}}\" containing keyword \"{{keyword}}\".",
+        "deleteConfirmationSuggestion": "To execute deletion, set confirm: true"
+    },
+    "messages": {
+        "listTools": "List tools"
+    }
+}
