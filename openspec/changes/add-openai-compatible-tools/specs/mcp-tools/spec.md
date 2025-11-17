@@ -11,6 +11,7 @@ The MCP server SHALL provide a `search` tool that enables OpenAI ChatGPT connect
 - **AND** each result SHALL have a unique, stable identifier (`id`)
 - **AND** each result SHALL have a human-readable title (`title`)
 - **AND** each result SHALL have a canonical URL (`url`) for citation purposes
+- **AND** OpenAI limits results to 50 events, which naturally bounds the response size and prevents overburdening
 
 #### Scenario: Search with no matches
 - **WHEN** the `search` tool is called with a query that matches no events

@@ -1,18 +1,18 @@
 ## 1. Implementation
-- [ ] 1.1 Add `search` tool definition to tool list handler
-- [ ] 1.2 Implement `search` tool handler that:
+- [x] 1.1 Add `search` tool definition to tool list handler
+- [x] 1.2 Implement `search` tool handler that:
   - Takes a query string parameter
   - Searches calendar events using existing AppleScript infrastructure
   - Returns results in OpenAI format: `{"results": [{"id": "...", "title": "...", "url": "..."}]}`
   - Encodes result as JSON string in MCP content array with `type: "text"`
-- [ ] 1.3 Add `fetch` tool definition to tool list handler
-- [ ] 1.4 Implement `fetch` tool handler that:
+- [x] 1.3 Add `fetch` tool definition to tool list handler
+- [x] 1.4 Implement `fetch` tool handler that:
   - Takes an ID string parameter
   - Retrieves full event details by ID
   - Returns document in OpenAI format: `{"id": "...", "title": "...", "text": "...", "url": "...", "metadata": {...}}`
   - Encodes result as JSON string in MCP content array with `type: "text"`
-- [ ] 1.5 Add ID generation/mapping logic to create stable IDs for calendar events
-- [ ] 1.6 Add URL generation for calendar events (e.g., `calendar://event/{id}` or similar)
+- [x] 1.5 Add ID generation/mapping logic to create stable IDs for calendar events
+- [x] 1.6 Add URL generation for calendar events (e.g., `calendar://event/{id}` or similar)
 
 ## 2. Testing
 - [ ] 2.1 Test `search` tool with various query strings
