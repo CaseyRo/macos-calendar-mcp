@@ -153,12 +153,33 @@ When running in HTTP mode, the server will:
 - Accept MCP protocol requests at `POST /mcp`
 - Provide SSE streaming at `GET /mcp`
 - Expose a health check endpoint at `GET /health`
+- Display all available network interfaces and their IP addresses on startup
+
+The server automatically detects and displays all network interfaces where it's accessible, including:
+- **localhost** (127.0.0.1) - for local connections
+- **Wi-Fi** - your wireless network IP address
+- **Ethernet** - your wired network IP address (if connected)
+- **Tailscale** - your Tailscale VPN IP address (if Tailscale is active)
+- Other active network interfaces
+
+Each interface shows the complete endpoint URL (e.g., `http://192.168.1.100:3000/mcp`) for easy copy-paste when connecting clients.
 
 **Example .env configuration for HTTP mode:**
 ```env
 MCP_TRANSPORT=http
 MCP_HTTP_HOST=0.0.0.0
 MCP_HTTP_PORT=3000
+```
+
+**Example server startup output:**
+
+```
+macOS Calendar MCP Server running on http://0.0.0.0:3000/mcp
+
+📡 Server accessible on:
+   localhost    → http://127.0.0.1:3000/mcp
+   Tailscale    → http://100.103.186.45:3000/mcp
+   Wi-Fi        → http://192.168.0.24:3000/mcp
 ```
 
 #### Accessing from Network
@@ -426,6 +447,10 @@ yarn start
 # Or override with environment variable
 MCP_TRANSPORT=http yarn start
 ```
+
+## Credits
+
+This project is based on the original work by [xybstone](https://github.com/xybstone/macos-calendar-mcp). Thank you for creating the initial implementation!
 
 ## License
 

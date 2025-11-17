@@ -13,8 +13,75 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { execSync } from 'child_process';
 import { randomUUID } from 'node:crypto';
+import { networkInterfaces } from 'node:os';
 import express from 'express';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+
+/**
+ * Get all network interfaces with their IP addresses formatted for display
+ * @param {number} port - The port number to include in URLs
+ * @returns {Array<{name: string, address: string, url: string}>} Array of interface info
+ */
+function getNetworkInterfaces(port) {
+  const interfaces = networkInterfaces();
+  const result = [];
+  const seenAddresses = new Set();
+
+  for (const [name, addresses] of Object.entries(interfaces)) {
+    if (!addresses) continue;
+
+    for (const addr of addresses) {
+      // Skip IPv6 and internal addresses (except localhost)
+      if (addr.family === 'IPv6') continue;
+      if (addr.internal && addr.address !== '127.0.0.1') continue;
+
+      // Skip duplicate addresses
+      if (seenAddresses.has(addr.address)) continue;
+      seenAddresses.add(addr.address);
+
+      // Format interface name for display
+      let displayName = name;
+
+      // Detect localhost
+      if (addr.address === '127.0.0.1' || name === 'lo0') {
+        displayName = 'localhost';
+      }
+      // Detect Tailscale (100.x.x.x is Tailscale's IPv4 range, or utun* with 100.x.x.x)
+      else if (addr.address.startsWith('100.') || (name.startsWith('utun') && addr.address.startsWith('100.'))) {
+        displayName = 'Tailscale';
+      }
+      // Detect WiFi (en0 is typically WiFi on macOS)
+      else if (name === 'en0' || name.toLowerCase().includes('wifi') || name.toLowerCase().includes('wi-fi')) {
+        displayName = 'Wi-Fi';
+      }
+      // Detect Ethernet (en1, en2, etc. are typically Ethernet on macOS, but not en0)
+      else if (name.match(/^en[1-9]\d*$/) || name.toLowerCase().includes('ethernet')) {
+        displayName = 'Ethernet';
+      }
+      // Keep original name for other interfaces
+      else {
+        displayName = name;
+      }
+
+      result.push({
+        name: displayName,
+        address: addr.address,
+        url: `http://${addr.address}:${port}/mcp`
+      });
+    }
+  }
+
+  // Sort: localhost first, then by priority (Tailscale, Wi-Fi, Ethernet), then alphabetically
+  const priority = { 'localhost': 0, 'Tailscale': 1, 'Wi-Fi': 2, 'Ethernet': 3 };
+  result.sort((a, b) => {
+    const aPriority = priority[a.name] ?? 99;
+    const bPriority = priority[b.name] ?? 99;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return a.name.localeCompare(b.name);
+  });
+
+  return result;
+}
 
 export class MacOSCalendarServer {
   constructor() {
@@ -964,6 +1031,15 @@ export class MacOSCalendarServer {
 
     app.listen(port, host, () => {
       console.error(`macOS Calendar MCP Server running on http://${host}:${port}/mcp`);
+
+      // Display all available network interfaces
+      const interfaces = getNetworkInterfaces(port);
+      if (interfaces.length > 0) {
+        console.error('\n📡 Server accessible on:');
+        for (const iface of interfaces) {
+          console.error(`   ${iface.name.padEnd(12)} → ${iface.url}`);
+        }
+      }
     });
 
     // Handle server shutdown
